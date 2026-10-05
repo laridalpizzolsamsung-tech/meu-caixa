@@ -109,6 +109,7 @@ nav.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(-
 .strip{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden;margin:18px 0}
 .strip div{background:var(--surface);padding:14px 16px}
 .strip small{display:block;color:var(--muted);font-size:13px}
+.strip .sub2{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 .strip b{font-size:clamp(18px,3.4vw,26px);font-weight:700}
 .c-in{color:var(--in)}.c-out{color:var(--out)}.c-inv{color:var(--inv)}
 @media (max-width:640px){.strip{grid-template-columns:1fr 1fr}}
@@ -201,7 +202,7 @@ dialog::backdrop{background:rgba(10,20,25,.45)}
 .mhead h2{margin:0;font-family:"Bricolage Grotesque",sans-serif;font-size:21px}
 .x{border:0;background:none;font-size:24px;color:var(--muted);width:36px;height:36px}
 form.f{padding:14px 20px 20px;display:grid;gap:12px}
-.seg{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;background:var(--surface2);padding:4px;border-radius:12px}
+.seg{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;background:var(--surface2);padding:4px;border-radius:12px}
 .seg.two{grid-template-columns:1fr 1fr}
 .seg label{position:relative}
 .seg input{position:absolute;opacity:0}
@@ -306,11 +307,13 @@ body[data-acc="all"] .btn{color:var(--bg)}
       <label><input type="radio" name="type" value="variavel" checked><span>Variável</span></label>
       <label><input type="radio" name="type" value="investimento"><span>Investim.</span></label>
       <label><input type="radio" name="type" value="recebimento"><span>Recebim.</span></label>
+      <label><input type="radio" name="type" value="transferencia"><span>Transf.</span></label>
     </div>
     <div class="seg two" role="radiogroup" aria-label="Conta">
       <label><input type="radio" name="acc" value="pf" checked><span>Conta PF</span></label>
       <label><input type="radio" name="acc" value="pj"><span>Conta PJ</span></label>
     </div>
+    <p class="hint" id="trHint" hidden></p>
     <label class="fl"><span>Nome</span><input name="name" required placeholder="Ex.: Mercado, Internet, Salário"></label>
     <div class="row2">
       <label class="fl"><span id="valLabel">Valor (R$)</span><input name="valor" inputmode="decimal" required placeholder="0,00"></label>
@@ -444,12 +447,13 @@ body[data-acc="all"] .btn{color:var(--bg)}
 (() => {
 /* ---------- state ---------- */
 const TYPES = {fixa:'Contas fixas', variavel:'Variáveis', investimento:'Investimentos', recebimento:'Recebimentos'};
-const TYPE1 = {fixa:'Fixa', variavel:'Variável', investimento:'Investimento', recebimento:'Recebimento'};
+const TYPE1 = {fixa:'Fixa', variavel:'Variável', investimento:'Investimento', recebimento:'Recebimento', transferencia:'Transferência'};
 const CATS = {
   fixa:['Moradia','Contas de casa','Assinaturas','Saúde','Educação','Impostos','Serviços','Outros'],
   variavel:['Mercado','Alimentação','Transporte','Compras','Lazer','Saúde','Casa','Outros'],
   investimento:['Renda fixa','Tesouro','Ações','FIIs','Cripto','Reserva','Previdência','Outros'],
-  recebimento:['Salário','Pró-labore','Clientes','Vendas','Freela','Rendimentos','Reembolso','Outros']
+  recebimento:['YouTube','Salário','Pró-labore','Clientes','Vendas','Freela','Rendimentos','Reembolso','Outros'],
+  transferencia:['Salário','Pró-labore','Distribuição de lucros','Reembolso','Outros']
 };
 const PAL = ['#0F7B6C','#3D4FB8','#E07A3F','#C8463D','#B7791F','#7A4FB0','#2E93B8','#6B8E23','#D0558E','#5E6E77','#9C6B3C','#1F8A5B'];
 let data = {pf:[], pj:[]};
@@ -525,9 +529,16 @@ function monthItems(m, type){
   }
   return out.sort((x,y)=> (y.date>x.date?1:-1));
 }
+const other = a => a==='pf'?'pj':'pf';
+function transfersIn(m,a){
+  const o=other(a);
+  return data[o].filter(t=>t.type==='transferencia'&&(t.para||other(o))===a).map(t=>{const x=occ(t,m,o);return x?{...t,acc:o,...x,incoming:true}:null;}).filter(Boolean);
+}
+function transfersOut(m,a){ return data[a].filter(t=>t.type==='transferencia').map(t=>{const x=occ(t,m,a);return x?{...t,acc:a,...x}:null;}).filter(Boolean); }
 function netAcc(m,a){
   let n=0;
   for(const t of data[a]){ const o=occ(t,m,a); if(!o) continue; n += t.type==='recebimento' ? o.amount : -o.amount; }
+  for(const t of transfersIn(m,a)) n+=t.amount;
   return n;
 }
 function firstYM(a){ let f=null; for(const t of data[a]){ const y=startYM(t,a); if(f===null||y<f) f=y; } return f; }
@@ -542,9 +553,12 @@ function saldoAnterior(m,a){
 }
 function saldoAnt(m){ return accs().reduce((s,a)=>s+saldoAnterior(m,a),0); }
 function totals(m){
-  const r={in:0,out:0,inv:0};
+  const r={in:0,out:0,inv:0,tin:0,tout:0};
+  const single=st.acc!=='all';
+  if(single) for(const it of transfersIn(m,st.acc)){ r.tin+=it.amount; r.in+=it.amount; }
   for(const it of monthItems(m)){
-    if(it.type==='recebimento') r.in+=it.amount;
+    if(it.type==='transferencia'){ if(single){ r.tout+=it.amount; r.out+=it.amount; } }
+    else if(it.type==='recebimento') r.in+=it.amount;
     else if(it.type==='investimento') r.inv+=it.amount;
     else r.out+=it.amount;
   }
@@ -742,8 +756,8 @@ function strip(t){
   const missing=accs().filter(a=>!contas[a]);
   return `<section class="strip five">
     <button class="cell ant" id="editSaldo" aria-label="Ajustar saldo"><small>Saldo do mês anterior</small><b class="num" style="color:${ant<0?'var(--out)':'var(--ink)'}">${brl(ant)}</b></button>
-    <div><small>Entrou</small><b class="num c-in">+${brl(t.in)}</b></div>
-    <div><small>Saiu</small><b class="num c-out">−${brl(t.out)}</b></div>
+    <div><small>Entrou</small><b class="num c-in">+${brl(t.in)}</b>${t.tin?`<span class="sub2">inclui ${brl(t.tin)} vindo da ${other(st.acc).toUpperCase()}</span>`:''}</div>
+    <div><small>Saiu</small><b class="num c-out">−${brl(t.out)}</b>${t.tout?`<span class="sub2">inclui ${brl(t.tout)} para a ${other(st.acc).toUpperCase()}</span>`:''}</div>
     <div><small>Investido</small><b class="num c-inv">−${brl(t.inv)}</b></div>
     <div class="total"><small>Saldo em conta</small><b class="num" style="color:${final<0?'var(--out)':'var(--ink)'}">${brl(final)}</b></div></section>
     ${missing.length?`<div class="saldo-hint"><span>Informe quanto tem na conta ${missing.map(a=>a.toUpperCase()).join(' e ')} para o saldo ficar igual ao do banco.</span><button class="chip on" id="setSaldo">Informar saldo</button></div>`:''}`;
@@ -751,14 +765,19 @@ function strip(t){
 function renderGeral(){
   const t=totals(st.m);
   const items=monthItems(st.m);
-  const saidas=items.filter(i=>i.type==='fixa'||i.type==='variavel');
+  const single=st.acc!=='all';
+  const trOuts= single ? transfersOut(st.m,st.acc).map(i=>({...i,cat:'Transferência para '+other(st.acc).toUpperCase()})) : [];
+  const saidas=items.filter(i=>i.type==='fixa'||i.type==='variavel').concat(trOuts);
+  const trList = single ? transfersOut(st.m,st.acc).concat(transfersIn(st.m,st.acc)) : items.filter(i=>i.type==='transferencia');
   view.innerHTML = strip(t) + `
   <div class="grid2">
     <div class="panel"><h3>Para onde foi o dinheiro</h3><p class="sub">Saídas por categoria. Toque numa fatia para ver os lançamentos.</p><div class="chartbox"><canvas id="p1"></canvas></div></div>
     <div class="panel"><h3>Como o mês se dividiu</h3><p class="sub">Fixas, variáveis, investimentos e o que sobrou.</p><div class="chartbox"><canvas id="p2"></canvas></div></div>
   </div>
   <div class="panel" style="margin-top:16px"><h3>Entrou x saiu</h3><p class="sub">Últimos 6 meses</p><div class="chartbox tall"><canvas id="b1"></canvas></div></div>
-  <div id="filt"></div>`;
+  <div id="filt"></div>
+  ${trList.length?`<div class="listhead"><h3>Transferências entre contas</h3></div>${txList(trList)}${single?'':'<p class="sub" style="margin-top:8px">Na visão Tudo, as transferências não contam como entrada nem saída, porque o dinheiro só mudou de conta.</p>'}`:''}`;
+  bindList(view);
   { const b1=document.getElementById('editSaldo'), b2=document.getElementById('setSaldo'); if(b1) b1.onclick=()=>openSaldo(); if(b2) b2.onclick=()=>openSaldo(accs().find(a=>!contas[a])); }
   if(saidas.length){
     const g=group(saidas,i=>i.cat);
@@ -767,7 +786,7 @@ function renderGeral(){
   const fx=saidas.filter(i=>i.type==='fixa').reduce((a,b)=>a+b.amount,0);
   const vr=saidas.filter(i=>i.type==='variavel').reduce((a,b)=>a+b.amount,0);
   const sobra=Math.max(0,t.in-t.out-t.inv);
-  const L=[],V=[];[['Contas fixas',fx],['Variáveis',vr],['Investimentos',t.inv],['Sobrou',sobra]].forEach(([l,v])=>{if(v>0){L.push(l);V.push(Math.round(v*100)/100);}});
+  const L=[],V=[];[['Contas fixas',fx],['Variáveis',vr],['Investimentos',t.inv],['Transferido para '+other(st.acc).toUpperCase(),t.tout],['Sobrou',sobra]].forEach(([l,v])=>{if(v>0){L.push(l);V.push(Math.round(v*100)/100);}});
   if(V.length) pie(document.getElementById('p2'),L,V,lbl=>{const map={'Contas fixas':'fixa','Variáveis':'variavel','Investimentos':'investimento'};if(map[lbl]){st.tab=map[lbl];render();}});
   else document.getElementById('p2').parentElement.innerHTML=emptyMsg('Nada lançado neste mês.');
   const labels=[],ins=[],outs=[];
@@ -786,7 +805,7 @@ function showFilter(saidas){
 function emptyMsg(t){return `<div class="empty">${esc(t)}<br><button class="chip on" data-new>+ Lançar agora</button></div>`;}
 
 function renderType(type){
-  const items=monthItems(st.m,type);
+  const items=monthItems(st.m,type).concat(type==='recebimento'&&st.acc!=='all'?transfersIn(st.m,st.acc):[]);
   const total=items.reduce((a,b)=>a+b.amount,0);
   const cls=type==='recebimento'?'c-in':type==='investimento'?'c-inv':'c-out';
   const filtered=st.catFilter?items.filter(i=>(i.cat||'Outros')===st.catFilter):items;
@@ -1016,12 +1035,13 @@ function progHTML(idx,n,compact){
 function txList(items){
   const mk=ymKey(st.m);
   return `<ul class="tx">${items.map(i=>{
-    const col=i.type==='recebimento'?'var(--in)':i.type==='investimento'?'var(--inv)':'var(--out)';
-    const sign=i.type==='recebimento'?'+':i.type==='investimento'?'':'−';
+    const isT=i.type==='transferencia', tIn=isT&&i.incoming, tOut=isT&&!i.incoming&&st.acc!=='all';
+    const col=isT?(tIn?'var(--in)':tOut?'var(--out)':'var(--muted)'):i.type==='recebimento'?'var(--in)':i.type==='investimento'?'var(--inv)':'var(--out)';
+    const sign=isT?(tIn?'+':tOut?'−':'⇄ '):i.type==='recebimento'?'+':i.type==='investimento'?'':'−';
     const mt=i.meta&&metas[i.acc].find(x=>x.id===i.meta);
     const accTag=(st.acc==='all'?`<span class="tag ${i.acc}">${i.acc.toUpperCase()}</span>`:'')+(mt?`<span class="tag meta-t">🎯 ${mt.name===i.name?'Meta':esc(mt.name)}</span>`:'');
     const cc=cardOf(i,i.acc);
-    const meta=[i.cat||'Outros', ...(cc?['💳 '+cc.nome]:[]), ...(i.eur>0?[eur(i.eur)+' a '+brl(i.valor/i.eur)]:[]), i.n>1?brl(i.valor)+' no total':(i.rec?'Todo mês':new Date(i.date+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'}))].join(', ');
+    const meta=[...(isT?['⇄ '+i.acc.toUpperCase()+' → '+(i.para||other(i.acc)).toUpperCase()]:[]), i.cat||'Outros', ...(cc?['💳 '+cc.nome]:[]), ...(i.eur>0?[eur(i.eur)+' a '+brl(i.valor/i.eur)]:[]), i.n>1?brl(i.valor)+' no total':(i.rec?'Todo mês':new Date(i.date+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'}))].join(', ');
     return `<li data-id="${i.id}" data-acc="${i.acc}">
       <span class="dot" style="background:${col}"></span>
       <div><div class="t">${esc(i.name)}${accTag}</div><div class="m">${esc(meta)}</div>
@@ -1208,7 +1228,10 @@ function renderParcelas(){
 const dlg=document.getElementById('dlg'), frm=document.getElementById('frm');
 function syncForm(){
   const type=frm.type.value, isParc=frm.isParc.checked;
-  document.getElementById('parcBox').hidden = type==='recebimento'||type==='investimento';
+  document.getElementById('parcBox').hidden = type==='recebimento'||type==='investimento'||type==='transferencia';
+  const trh=document.getElementById('trHint');
+  if(type==='transferencia'){ trh.hidden=false; const a=frm.acc.value; trh.textContent=`Sai da conta ${a.toUpperCase()} e entra na conta ${other(a).toUpperCase()}. Escolha acima a conta de onde o dinheiro sai.`; }
+  else trh.hidden=true;
   if(document.getElementById('parcBox').hidden) frm.isParc.checked=false;
   const p=frm.isParc.checked;
   document.getElementById('nParcWrap').hidden=!p;
@@ -1279,7 +1302,7 @@ function openForm(acc,id){
   syncForm(); if(payPre){ frm.pay.value=payPre; syncForm(); } if(id&&frm._meta){frm.meta.value=frm._meta; if(frm._eur>0){frm.isEur.checked=true; frm.eurq.value=String(frm._eur).replace('.',',');} syncForm();} frm._meta=''; frm._eur=0; dlg.showModal(); setTimeout(()=>frm.name.focus(),50);
 }
 frm.addEventListener('input',syncForm);
-frm.addEventListener('change',e=>{ if(e.target.name==='type'){frm.rec.checked=frm.type.value==='fixa';} syncForm(); });
+frm.addEventListener('change',e=>{ if(e.target.name==='type'){frm.rec.checked=frm.type.value==='fixa'; if(frm.type.value==='transferencia'&&!editing){ frm.acc.value='pj'; if(!frm.cat.value) frm.cat.value='Salário'; }} syncForm(); });
 frm.onsubmit=e=>{
   e.preventDefault();
   const valor=parseMoney(frm.valor.value);
@@ -1295,6 +1318,7 @@ frm.onsubmit=e=>{
   const t={id:editing?editing.id:uidGen(), type:frm.type.value, name:frm.name.value.trim()||'Sem nome', valor, date,
     cat:frm.cat.value.trim()||'Outros', desc:frm.desc.value.trim(), n, rec:!p&&frm.rec.checked};
   const acc=frm.acc.value;
+  if(t.type==='transferencia') t.para=other(acc);
   if((t.type==='fixa'||t.type==='variavel') && frm.pay.value && cartoes[acc].some(c=>c.id===frm.pay.value)) t.cartao=frm.pay.value;
   if(t.type==='investimento'&&frm.meta.value&&metas[acc].some(m=>m.id===frm.meta.value)){
     t.meta=frm.meta.value;
@@ -1330,6 +1354,7 @@ const KW = [
   {k:['venda','vendi'],type:'recebimento',cat:'Vendas'},
   {k:['freela','freelance'],type:'recebimento',cat:'Freela'},
   {k:['reembolso'],type:'recebimento',cat:'Reembolso'},
+  {k:['youtube','adsense'],type:'recebimento',cat:'YouTube'},
   {k:['tesouro'],type:'investimento',cat:'Tesouro'},
   {k:['cdb','lci','lca','renda fixa'],type:'investimento',cat:'Renda fixa'},
   {k:['acoes','ações','acao','ação'],type:'investimento',cat:'Ações'},
@@ -1340,7 +1365,7 @@ const KW = [
   {k:['investi','aporte','investimento'],type:'investimento'},
   {k:['aluguel','condominio','condomínio','iptu'],type:'fixa',cat:'Moradia'},
   {k:['luz','energia','agua','água','gas','gás','internet','telefone','celular','wifi'],type:'fixa',cat:'Contas de casa'},
-  {k:['netflix','spotify','prime','disney','youtube','icloud','hbo','max ','globoplay','assinatura','chatgpt','claude'],type:'fixa',cat:'Assinaturas'},
+  {k:['netflix','spotify','prime','disney','youtube premium','icloud','hbo','max ','globoplay','assinatura','chatgpt','claude'],type:'fixa',cat:'Assinaturas'},
   {k:['academia','plano de saude','plano de saúde','convenio','convênio'],type:'fixa',cat:'Saúde'},
   {k:['das ','simples','inss','imposto','contador','contabilidade'],type:'fixa',cat:'Impostos'},
   {k:['escola','faculdade','mensalidade'],type:'fixa',cat:'Educação'},
@@ -1376,9 +1401,16 @@ function interpret(text){
     if(!type){type=r.type;cat=r.cat||null;if(cat)break;}
     else if(r.type===type&&r.cat){cat=r.cat;break;}
   }
-  const accR=acc||(st.acc==='all'?'pf':st.acc);
+  let accR=acc||(st.acc==='all'?'pf':st.acc);
+  const isTr=/\b(transferi|transferencia|transferir|transf|passei)\b/.test(low) || /\b(para|pra)\s+(a\s+)?(pf|pj)\b/.test(low);
+  if(isTr){
+    accR=/\b(para|pra)\s+(a\s+)?pj\b/.test(low)?'pf':'pj';
+    type='transferencia';
+    cat=/\b(salario|folha)\b/.test(low)?'Salário':/\bpro-?labore\b/.test(low)?'Pró-labore':/\blucros?\b/.test(low)?'Distribuição de lucros':/\breembolso\b/.test(low)?'Reembolso':'Outros';
+    n=1;
+  }
   let metaHit=null;
-  if(!forceType && (!type||type==='investimento'||/\b(guardei|guardar|meta|juntei|separei)\b/.test(low))){
+  if(!isTr && !forceType && (!type||type==='investimento'||/\b(guardei|guardar|meta|juntei|separei)\b/.test(low))){
     for(const m of metas[accR]||[]){
       const words=norm(m.name).split(/[^a-z0-9]+/).filter(w=>w.length>=4&&!/^\d+$/.test(w)&&!['para','meta','viagem','reserva','minha','nosso','nossa'].includes(w));
       const full=norm(m.name);
@@ -1387,20 +1419,23 @@ function interpret(text){
     if(!metaHit && /\b(meta)\b/.test(low) && (metas[accR]||[]).length===1) metaHit=metas[accR][0];
   }
   if(metaHit){type='investimento';cat='Metas';}
-  const usaCartao=/\b(cartao|credito|no cartao|cc)\b/.test(low);
-  if(forceType) type=forceType;
+  const usaCartao=!isTr&&/\b(cartao|credito|no cartao|cc)\b/.test(low);
+  if(forceType&&!isTr) type=forceType;
   if(!type) type='variavel';
   if(n>1 && (type==='recebimento'||type==='investimento')) n=1;
   // description: remove value, account, helper words
   let name=clean.replace(vm[0],' ')
-    .replace(/\b(pj|pf|reais|real|r\$|gastei|paguei|comprei|com|no|na|de|do|da|em|um|uma|fixa|variavel|variável|conta|ontem|hoje|dia\s*\d{1,2}|recebi|investi|registrar|registar|registra|anotar|anota|lancar|lançar|lanca|lança|cartao|cartão|credito|crédito|cc)\b/gi,' ')
+    .replace(/\b(pj|pf|reais|real|r\$|gastei|paguei|comprei|com|no|na|de|do|da|em|um|uma|fixa|variavel|variável|conta|ontem|hoje|dia\s*\d{1,2}|recebi|investi|registrar|registar|registra|anotar|anota|lancar|lançar|lanca|lança|cartao|cartão|credito|crédito|cc|transferi|transferencia|transferência|transferir|transf|passei|todo mes|todo mês|mensal)\b/gi,' ')
     .replace(/[,;:]+/g,' ').replace(/\s+/g,' ').trim();
   if(!name) name=cat||TYPE1[type];
   name=name.replace(/\b(guardei|guardar|meta|juntei|separei|pra|para)\b/gi,' ').replace(/\s+/g,' ').trim()||name;
   if(metaHit) name=metaHit.name;
   name=name.charAt(0).toUpperCase()+name.slice(1);
   if(name.length>48) name=name.slice(0,48);
-  const tx={id:uidGen(),type,name,valor,date,cat:cat||CATS[type][CATS[type].length-1],desc:'Registrado pelo chat: "'+text.trim()+'"',n,rec:type==='fixa'&&n===1};
+  if(isTr && /^(a|o)?$/i.test(name)) name=cat==='Outros'?'Transferência':cat;
+  if(isTr && (!name||name==='Outros')) name='Transferência';
+  const tx={id:uidGen(),type,name,valor,date,cat:cat||CATS[type][CATS[type].length-1],desc:'Registrado pelo chat: "'+text.trim()+'"',n,rec:(type==='fixa'&&n===1)||(isTr&&/\b(todo mes|mensal)\b/.test(low))};
+  if(isTr) tx.para=other(accR);
   if(metaHit) tx.meta=metaHit.id;
   if(usaCartao && (type==='variavel'||type==='fixa')){ const c=(cartoes[accR]||[])[0]; if(c){ tx.cartao=c.id; } }
   return {acc:accR, t:tx, meta:metaHit};
@@ -1408,7 +1443,7 @@ function interpret(text){
 function nowTime(){return new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
 function botReply(text){
   const low=norm(text.trim());
-  if(/^(oi|ola|olá|bom dia|boa tarde|boa noite|ajuda|help|\?)/.test(low)) return {text:'Oi! Me manda um gasto do jeito que você falaria. Exemplos:\n\nmercado 230,50\nifood 48 pj\ntv 2400 em 10x\ninternet 120 fixa\nrecebi 5000 cliente pj\ntesouro 500\nifood 60 cartão\neuropa 1000 (guarda na sua meta)\n\nTambém entendo "resumo" e "desfazer".'};
+  if(/^(oi|ola|olá|bom dia|boa tarde|boa noite|ajuda|help|\?)/.test(low)) return {text:'Oi! Me manda um gasto do jeito que você falaria. Exemplos:\n\nmercado 230,50\nifood 48 pj\ntv 2400 em 10x\ninternet 120 fixa\nrecebi 5000 cliente pj\ntesouro 500\nifood 60 cartão\nrecebi 4400 youtube pj\ntransferi salário 1442,69 pra pf todo mês\neuropa 1000 (guarda na sua meta)\n\nTambém entendo "resumo" e "desfazer".'};
   if(/^resumo|^saldo/.test(low)){
     const t=totals(ymNow()); const lbl=st.acc==='all'?'PF + PJ':st.acc.toUpperCase();
     const ant=saldoAnt(ymNow());
@@ -1423,6 +1458,7 @@ function botReply(text){
   if(!r) return {text:'Não encontrei um valor nessa mensagem. Tente algo como "mercado 150" ou "uber 32,90 pj".'};
   data[r.acc].push(r.t);
   const t=r.t;
+  if(t.type==='transferencia') return {text:`⇄ Transferência registrada\n\n${t.name}\n${brl(t.valor)} da ${r.acc.toUpperCase()} para a ${t.para.toUpperCase()}${t.rec?'\nRepete todo mês':''}`, ref:{acc:r.acc,id:t.id}, refName:t.name};
   const parc=t.n>1?`\n${t.n}x de ${brl(t.valor/t.n)} (total ${brl(t.valor)})`:'';
   if(r.meta){
     const sv=metaSaved(r.acc,r.meta), f=Math.max(0,r.meta.alvo-sv);
