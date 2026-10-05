@@ -146,6 +146,7 @@ ul.tx{list-style:none;margin:0;padding:0;background:var(--surface);border:1px so
 .exrow{display:grid;grid-template-columns:48px minmax(0,1fr) auto;box-sizing:border-box;gap:10px;align-items:center;padding:11px 14px;cursor:pointer;width:100%;text-align:left;background:none;border:0;color:inherit;font:inherit}
 .exrow:hover{background:var(--surface2)}
 .exrow.static{cursor:default;background:var(--surface2)}
+.ex li.prev{opacity:.62}
 .exday{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;line-height:1.1;color:var(--muted);text-align:center}
 .exday small{display:block;font-size:11px;font-weight:600}
 .exname{font-weight:600;overflow-wrap:anywhere}
@@ -590,13 +591,21 @@ function contasStatus(m){
 const SALDO_ACCS=['pj'];   // contas que carregam o saldo de um mês para o outro
 function saldoAccs(){ return accs().filter(a=>SALDO_ACCS.includes(a)); }
 function saldoAnt(m){ return saldoAccs().reduce((s,a)=>s+saldoAnterior(m,a),0); }
+/* dia em que o lançamento acontece no mês m (compras no cartão: dia do vencimento da fatura) */
+function occDay(i,m){
+  const last=new Date(Math.floor(m/12),m%12+1,0).getDate();
+  const cc=cardOf(i,i.acc);
+  return cc ? Math.min(cc.vence,last) : Math.min(parseInt(String(i.date).slice(8,10))||1,last);
+}
+function isFuture(i,m){ const now=ymNow(); if(m<now) return false; if(m>now) return true; return occDay(i,m) > new Date().getDate(); }
 /* Totais que mexem no saldo. O saldo existe só na PJ: na visão Tudo contam só os lançamentos da PJ
    (as contas da PF são pagas com o dinheiro que saiu da PJ por transferência). */
 function totals(m){
-  const r={in:0,out:0,inv:0,tin:0,tout:0};
+  const r={in:0,out:0,inv:0,tin:0,tout:0,inF:0,outF:0,invF:0};
   const list = st.acc==='all' ? ['pj'] : [st.acc];
   const its=[]; for(const a of list) for(const t of data[a]){ const o=occ(t,m,a); if(o) its.push({...t,acc:a,...o}); }
   for(const it of its){
+    if(isFuture(it,m)){ if(it.type==='recebimento') r.inF+=it.amount; else if(it.type==='investimento') r.invF+=it.amount; else r.outF+=it.amount; }
     if(it.type==='transferencia'){ r.tout+=it.amount; r.out+=it.amount; }
     else if(it.type==='recebimento') r.in+=it.amount;
     else if(it.type==='investimento') r.inv+=it.amount;
@@ -802,14 +811,16 @@ function strip(t){
     <div><small>Investido</small><b class="num c-inv">${brl(t.inv)}</b>${t.in?`<span class="sub2">recebido na PF: ${brl(t.in)}</span>`:''}</div></section>`;
   }
   const ant=saldoAnt(st.m), final=ant+t.in-t.out-t.inv;
+  const now=ymNow(), cur=st.m===now, fut=st.m>now;
+  const inR=t.in-t.inF, outR=t.out-t.outF, invR=t.inv-t.invF, hoje=ant+inR-outR-invR;
   const missing=saldoAccs().filter(a=>!contas[a]);
   const pfNote = st.acc==='all' ? (()=>{ const sv=st.acc; st.acc='pf'; const cs=contasStatus(st.m); st.acc=sv; return cs.total?`<div class="saldo-hint"><span>Contas da PF em ${ymLabel(st.m).toLowerCase()}: ${brl(cs.total)}, já pago ${brl(cs.pago)}, falta pagar <b style="color:var(--out)">${brl(cs.falta)}</b>. Elas são pagas com os repasses que saem da PJ.</span></div>`:''; })() : '';
   return `<section class="strip five">
     <button class="cell ant" id="editSaldo" aria-label="Ajustar saldo"><small>Saldo do mês anterior${st.acc==='all'?' (PJ)':''}</small><b class="num" style="color:${ant<0?'var(--out)':'var(--ink)'}">${brl(ant)}</b></button>
-    <div><small>Entrou</small><b class="num c-in">+${brl(t.in)}</b>${t.tin?`<span class="sub2">inclui ${brl(t.tin)} vindo da ${other(st.acc).toUpperCase()}</span>`:''}</div>
-    <div><small>Saiu</small><b class="num c-out">−${brl(t.out)}</b>${t.tout?`<span class="sub2">inclui ${brl(t.tout)} de transferências para a PF</span>`:''}</div>
-    <div><small>Investido</small><b class="num c-inv">−${brl(t.inv)}</b></div>
-    <div class="total"><small>Saldo em conta${st.acc==='all'?' (PJ)':''}</small><b class="num" style="color:${final<0?'var(--out)':'var(--ink)'}">${brl(final)}</b></div></section>
+    <div><small>${fut?'Entrada prevista':'Entrou'}</small><b class="num c-in">+${brl(cur?inR:t.in)}</b>${cur&&t.inF?`<span class="sub2">+ ${brl(t.inF)} previsto até o fim do mês</span>`:''}</div>
+    <div><small>${fut?'Saída prevista':'Saiu'}</small><b class="num c-out">−${brl(cur?outR:t.out)}</b>${cur&&t.outF?`<span class="sub2">+ ${brl(t.outF)} previsto até o fim do mês</span>`:''}${t.tout&&!cur?`<span class="sub2">inclui ${brl(t.tout)} de transferências para a PF</span>`:''}</div>
+    <div><small>${fut?'Investimento previsto':'Investido'}</small><b class="num c-inv">−${brl(cur?invR:t.inv)}</b>${cur&&t.invF?`<span class="sub2">+ ${brl(t.invF)} previsto</span>`:''}</div>
+    <div class="total"><small>${cur?'Saldo hoje':fut?'Saldo previsto':'Saldo em conta'}${st.acc==='all'?' (PJ)':''}</small><b class="num" style="color:${(cur?hoje:final)<0?'var(--out)':'var(--ink)'}">${brl(cur?hoje:final)}</b>${cur&&(t.inF||t.outF||t.invF)?`<span class="sub2">no fim do mês: ${brl(final)}</span>`:''}</div></section>
     ${pfNote}${missing.length?`<div class="saldo-hint"><span>Informe quanto tem na conta ${missing.map(a=>a.toUpperCase()).join(' e ')} para o saldo ficar igual ao do banco.</span><button class="chip on" id="setSaldo">Informar saldo</button></div>`:''}`;
 }
 function renderGeral(){
@@ -877,7 +888,10 @@ function renderExtrato(){
   const ini=temSaldo?saldoAnt(m):0;
   let run=ini, totIn=0, totOut=0;
   for(const r of rows){ run+=r.eff; r.saldo=Math.round(run*100)/100; if(r.eff>0) totIn+=r.eff; else totOut-=r.eff;
-    r.paid = r.group ? faturaInfo(r.card,m).paga : (r.kind==='saida' ? paidState(r.i,m) : true); }
+    r.paid = r.group ? faturaInfo(r.card,m).paga : (r.kind==='saida' ? paidState(r.i,m) : true);
+    r.prev = m>ymNow() || (m===ymNow() && r.day>new Date().getDate()); }
+  const saldoHoje = Math.round((ini + rows.filter(r=>!r.prev).reduce((a,r)=>a+r.eff,0))*100)/100;
+  const isCur = m===ymNow();
   const q=norm(st.exQ||'');
   const match=r=>{
     if(st.exF==='entradas'&&!(r.eff>0)) return false;
@@ -893,7 +907,9 @@ function renderExtrato(){
   const valHTML=r=>{
     const c=r.eff>0?'var(--in)':r.eff<0?(r.kind==='invest'?'var(--inv)':'var(--out)'):'var(--muted)';
     const v=r.info?brl(r.amt):(r.eff>0?'+':'−')+brl(Math.abs(r.eff));
-    const tail = r.info ? `<small>conta PF, ${r.paid?'✓ pago':'a pagar'}</small>` : temSaldo ? `<small class="num">saldo ${brl(r.saldo)}</small>` : (r.kind==='saida' ? `<small style="color:${r.paid?'var(--in)':'var(--out)'}">${r.paid?'✓ pago':'a pagar'}</small>` : '');
+    const prevTag = r.prev && !r.info ? '<small>previsto</small> ' : '';
+    const tail0 = r.info ? `<small>conta PF, ${r.paid?'✓ pago':'a pagar'}</small>` : temSaldo ? `<small class="num">saldo ${brl(r.saldo)}</small>` : (r.kind==='saida' ? `<small style="color:${r.paid?'var(--in)':'var(--out)'}">${r.paid?'✓ pago':'a pagar'}</small>` : '');
+    const tail = prevTag + tail0;
     return `<div class="exval"><b class="num" style="color:${c}">${v}</b>${tail}</div>`;
   };
   const subOf=r=>{
@@ -907,9 +923,11 @@ function renderExtrato(){
     return parts.join(', ');
   };
   const shown=rows.filter(match);
-  const list=shown.map(r=> r.group
-    ? `<li><details><summary class="exrow"><div class="exday">${dd(r.day)}</div><div><div class="exname">💳 ${esc(r.name)}</div><div class="exsub">${r.items.length} compra${r.items.length>1?'s':''} nesta fatura. Toque para ver.</div></div>${valHTML(r)}</summary>${txList(r.items)}</details></li>`
-    : `<li><button class="exrow" data-ex="${r.i.id}" data-acc="${r.i.acc}"><div class="exday">${dd(r.day)}</div><div><div class="exname">${esc(r.i.name)}</div><div class="exsub">${esc(subOf(r))}</div></div>${valHTML(r)}</button></li>`).join('');
+  let markerDone=!isCur||!temSaldo;
+  const marker=()=>{ if(markerDone) return ''; markerDone=true; const d=new Date(); return `<li><div class="exrow static" style="background:var(--acc-soft)"><div class="exday">${String(d.getDate()).padStart(2,'0')}<small>${ymShort(m)}</small></div><div><div class="exname">Hoje</div><div class="exsub">Daqui pra baixo são lançamentos previstos</div></div><div class="exval"><b class="num">${brl(saldoHoje)}</b><small>saldo hoje</small></div></div></li>`; };
+  const list=shown.map(r=> (r.prev?marker():'') + (r.group
+    ? `<li class="${r.prev?'prev':''}"><details><summary class="exrow"><div class="exday">${dd(r.day)}</div><div><div class="exname">💳 ${esc(r.name)}</div><div class="exsub">${r.items.length} compra${r.items.length>1?'s':''} nesta fatura. Toque para ver.</div></div>${valHTML(r)}</summary>${txList(r.items)}</details></li>`
+    : `<li class="${r.prev?'prev':''}"><button class="exrow" data-ex="${r.i.id}" data-acc="${r.i.acc}"><div class="exday">${dd(r.day)}</div><div><div class="exname">${esc(r.i.name)}</div><div class="exsub">${esc(subOf(r))}</div></div>${valHTML(r)}</button></li>`)).join('') + marker();
   const chip=(k,l)=>`<button class="chip ${st.exF===k?'on':''}" data-exf="${k}">${l}</button>`;
   const cs=contasStatus(m);
   view.innerHTML=`<div class="ex-tools">${chip('todos','Todos')}${temSaldo?chip('entradas','Entradas')+chip('saidas','Saídas')+chip('transf','Transferências'):chip('apagar','A pagar')+chip('pagas','Pagas')}
@@ -922,7 +940,7 @@ function renderExtrato(){
       <div>Saldo anterior<b class="num">${brl(ini)}</b></div>
       <div>Entradas<b class="num c-in">+${brl(totIn)}</b></div>
       <div>Saídas<b class="num c-out">−${brl(totOut)}</b></div>
-      <div>Saldo em conta<b class="num">${brl(ini+totIn-totOut)}</b></div>
+      <div>${isCur?'Saldo hoje':m>ymNow()?'Saldo previsto':'Saldo em conta'}<b class="num">${brl(isCur?saldoHoje:ini+totIn-totOut)}</b>${isCur&&saldoHoje!==Math.round((ini+totIn-totOut)*100)/100?`<small>fim do mês: ${brl(ini+totIn-totOut)}</small>`:''}</div>
     </div>`:`<div class="ex-foot">
       <div>Contas do mês<b class="num">${brl(cs.total)}</b></div>
       <div>Já pago<b class="num c-in">${brl(cs.pago)}</b></div>
@@ -952,6 +970,10 @@ function renderType(type){
   const cls=type==='recebimento'?'c-in':type==='investimento'?'c-inv':'c-out';
   const filtered=st.catFilter?items.filter(i=>(i.cat||'Outros')===st.catFilter):items;
   let extra='';
+  if(type==='recebimento'){
+    const prev=items.filter(i=>isFuture(i,st.m)).reduce((a,b)=>a+b.amount,0);
+    extra=`<p class="sub">Já recebido: <b class="num" style="color:var(--in)">${brl(total-prev)}</b>${prev?` &nbsp; Previsto: <b class="num">${brl(prev)}</b>`:''}</p>`;
+  }
   if(type==='fixa'){
     const pago=items.filter(i=>(i.pagos||[]).includes(ymKey(st.m))).reduce((a,b)=>a+b.amount,0);
     extra=`<p class="sub">Pago: <b class="num">${brl(pago)}</b> de ${brl(total)}</p>`;
@@ -1183,7 +1205,8 @@ function txList(items){
     const mt=i.meta&&metas[i.acc].find(x=>x.id===i.meta);
     const accTag=(st.acc==='all'?`<span class="tag ${i.acc}">${i.acc.toUpperCase()}</span>`:'')+(mt?`<span class="tag meta-t">🎯 ${mt.name===i.name?'Meta':esc(mt.name)}</span>`:'');
     const cc=cardOf(i,i.acc);
-    const meta=[...(isT?['⇄ '+i.acc.toUpperCase()+' → '+(i.para||other(i.acc)).toUpperCase()]:[]), i.cat||'Outros', ...(cc?['💳 '+cc.nome]:[]), ...(i.eur>0?[eur(i.eur)+' a '+brl(i.valor/i.eur)]:[]), i.n>1?brl(i.valor)+' no total':(i.rec?'Todo mês':new Date(i.date+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'}))].join(', ');
+    const prevTxt = isFuture(i,st.m) ? ['🕒 previsto para '+String(occDay(i,st.m)).padStart(2,'0')+'/'+String(st.m%12+1).padStart(2,'0')] : [];
+    const meta=[...prevTxt, ...(isT?['⇄ '+i.acc.toUpperCase()+' → '+(i.para||other(i.acc)).toUpperCase()]:[]), i.cat||'Outros', ...(cc?['💳 '+cc.nome]:[]), ...(i.eur>0?[eur(i.eur)+' a '+brl(i.valor/i.eur)]:[]), i.n>1?brl(i.valor)+' no total':(i.rec?'Todo mês':new Date(i.date+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'}))].join(', ');
     return `<li data-id="${i.id}" data-acc="${i.acc}">
       <span class="dot" style="background:${col}"></span>
       <div><div class="t">${esc(i.name)}${accTag}</div><div class="m">${esc(meta)}</div>
@@ -1567,7 +1590,7 @@ function interpret(text){
   if(n>1 && (type==='recebimento'||type==='investimento')) n=1;
   // description: remove value, account, helper words
   let name=clean.replace(vm[0],' ')
-    .replace(/\b(pj|pf|reais|real|r\$|gastei|paguei|comprei|com|no|na|de|do|da|em|um|uma|fixa|variavel|variável|conta|ontem|hoje|dia\s*\d{1,2}|recebi|investi|registrar|registar|registra|anotar|anota|lancar|lançar|lanca|lança|cartao|cartão|credito|crédito|cc|transferi|transferencia|transferência|transferir|transf|passei|todo mes|todo mês|mensal)\b/gi,' ')
+    .replace(/\b(pj|pf|reais|real|r\$|gastei|paguei|comprei|com|no|na|de|do|da|em|um|uma|fixa|variavel|variável|conta|ontem|hoje|dia\s*\d{1,2}|recebi|investi|registrar|registar|registra|anotar|anota|lancar|lançar|lanca|lança|cartao|cartão|credito|crédito|cc|transferi|transferencia|transferência|transferir|transf|passei|todo mes|todo mês|todos os meses|todo|mensal|mensalmente|entra|cai)\b/gi,' ')
     .replace(/[,;:]+/g,' ').replace(/\s+/g,' ').trim();
   if(!name) name=cat||TYPE1[type];
   name=name.replace(/\b(guardei|guardar|meta|juntei|separei|pra|para)\b/gi,' ').replace(/\s+/g,' ').trim()||name;
@@ -1576,7 +1599,7 @@ function interpret(text){
   if(name.length>48) name=name.slice(0,48);
   if(isTr && /^(a|o)?$/i.test(name)) name=cat==='Outros'?'Transferência':cat;
   if(isTr && (!name||name==='Outros')) name='Transferência';
-  const tx={id:uidGen(),type,name,valor,date,cat:cat||CATS[type][CATS[type].length-1],desc:'Registrado pelo chat: "'+text.trim()+'"',n,rec:(type==='fixa'&&n===1)||(isTr&&/\b(todo mes|mensal)\b/.test(low))};
+  const tx={id:uidGen(),type,name,valor,date,cat:cat||CATS[type][CATS[type].length-1],desc:'Registrado pelo chat: "'+text.trim()+'"',n,rec:n===1&&((type==='fixa')||/\b(todo mes|todo dia|todos os meses|mensal|mensalmente)\b/.test(low))};
   if(isTr) tx.para=other(accR);
   if(metaHit) tx.meta=metaHit.id;
   if(usaCartao && (type==='variavel'||type==='fixa')){ const c=(cartoes[accR]||[])[0]; if(c){ tx.cartao=c.id; } }
@@ -1585,7 +1608,7 @@ function interpret(text){
 function nowTime(){return new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
 function botReply(text){
   const low=norm(text.trim());
-  if(/^(oi|ola|olá|bom dia|boa tarde|boa noite|ajuda|help|\?)/.test(low)) return {text:'Oi! Me manda um gasto do jeito que você falaria. Exemplos:\n\nmercado 230,50\nifood 48 pj\ntv 2400 em 10x\ninternet 120 fixa\nrecebi 5000 cliente pj\ntesouro 500\nifood 60 cartão\nrecebi 4400 youtube pj\ntransferi salário 1442,69 pra pf todo mês\neuropa 1000 (guarda na sua meta)\n\nTambém entendo "resumo" e "desfazer".'};
+  if(/^(oi|ola|olá|bom dia|boa tarde|boa noite|ajuda|help|\?)/.test(low)) return {text:'Oi! Me manda um gasto do jeito que você falaria. Exemplos:\n\nmercado 230,50\nifood 48 pj\ntv 2400 em 10x\ninternet 120 fixa\nrecebi 5000 cliente pj\ntesouro 500\nifood 60 cartão\nrecebi 4400 youtube pj\ntransferi salário 1442,69 pra pf todo mês\nsalário tata 1442,69 todo dia 10 pj\neuropa 1000 (guarda na sua meta)\n\nTambém entendo "resumo" e "desfazer".'};
   if(/^resumo|^saldo/.test(low)){
     const t=totals(ymNow()); const lbl=st.acc==='all'?'PF + PJ':st.acc.toUpperCase();
     if(!saldoAccs().length){ const cs=contasStatus(ymNow()); return {text:`Contas de ${ymLabel(ymNow())} (${lbl}):\n\nTotal ${brl(cs.total)}\nJá pago ${brl(cs.pago)}\nFalta pagar ${brl(cs.falta)}`}; }
