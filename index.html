@@ -112,6 +112,14 @@ nav.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(-
 .strip b{font-size:clamp(18px,3.4vw,26px);font-weight:700}
 .c-in{color:var(--in)}.c-out{color:var(--out)}.c-inv{color:var(--inv)}
 @media (max-width:640px){.strip{grid-template-columns:1fr 1fr}}
+.strip.five{grid-template-columns:repeat(5,1fr)}
+.strip .total{background:var(--acc-soft)}
+.strip .total b{font-size:clamp(20px,3.8vw,30px)}
+.strip button.cell{all:unset;box-sizing:border-box;display:block;background:var(--surface);padding:14px 16px;cursor:pointer}
+.strip button.cell:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
+.strip button.cell small::after{content:" ✎";opacity:.6}
+@media (max-width:760px){.strip.five{grid-template-columns:1fr 1fr}.strip.five .ant{grid-column:span 2}}
+.saldo-hint{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--surface);border:1px dashed var(--line);border-radius:12px;padding:10px 14px;margin:-6px 0 18px;font-size:14px;color:var(--muted)}
 
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media (max-width:760px){.grid2{grid-template-columns:1fr}}
@@ -362,6 +370,23 @@ body[data-acc="all"] .btn{color:var(--bg)}
     </div>
   </form>
 </dialog>
+<dialog id="sdlg">
+  <div class="mhead"><h2>Saldo em conta</h2><button class="x" id="sClose" aria-label="Fechar">×</button></div>
+  <form class="f" id="sfrm">
+    <div class="seg two" role="radiogroup" aria-label="Conta">
+      <label><input type="radio" name="acc" value="pf" checked><span>Conta PF</span></label>
+      <label><input type="radio" name="acc" value="pj"><span>Conta PJ</span></label>
+    </div>
+    <label class="fl"><span>Mês de referência</span><input name="desde" type="month" required></label>
+    <label class="fl"><span>Quanto tinha na conta no início desse mês (R$)</span><input name="valor" inputmode="decimal" required placeholder="Ex.: 20.000,00"></label>
+    <p class="hint">A partir daí o app soma o que entra e desconta o que sai, mês a mês. O que sobra de um mês vira o saldo inicial do próximo.</p>
+    <div class="actions">
+      <button type="button" class="btn ghost" id="sDel" hidden>Remover</button>
+      <span></span>
+      <button type="submit" class="btn">Salvar saldo</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="cdlg">
   <div class="mhead"><h2 id="cTitle">Novo cartão</h2><button class="x" id="cClose" aria-label="Fechar">×</button></div>
   <form class="f" id="cfrm">
@@ -431,6 +456,7 @@ let data = {pf:[], pj:[]};
 let chat = [];
 let metas = {pf:[], pj:[]};
 let cartoes = {pf:[], pj:[]};
+let contas = {pf:null, pj:null};
 let editingMeta = null;
 let st = {acc:'pf', tab:'geral', m: ymNow(), catFilter:null};
 let editing = null;
@@ -454,7 +480,8 @@ function parseMoney(s){
   s=String(s).replace(/[R$\s]/gi,'');
   if(/,\d{1,2}$/.test(s)) s=s.replace(/\./g,'').replace(',','.');
   else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,'');
-  const v=parseFloat(s); return isFinite(v)?Math.round(v*100)/100:NaN;
+  const neg=/^-|^−/.test(s); s=s.replace(/^[-−]/,'');
+  const v=parseFloat(s); return isFinite(v)?(neg?-1:1)*Math.round(v*100)/100:NaN;
 }
 function toast(t){const el=document.getElementById('toast');el.textContent=t;el.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove('show'),2200);}
 function ask({title,msg='',label='',value=null,ok='OK',danger=false}){
@@ -498,6 +525,22 @@ function monthItems(m, type){
   }
   return out.sort((x,y)=> (y.date>x.date?1:-1));
 }
+function netAcc(m,a){
+  let n=0;
+  for(const t of data[a]){ const o=occ(t,m,a); if(!o) continue; n += t.type==='recebimento' ? o.amount : -o.amount; }
+  return n;
+}
+function firstYM(a){ let f=null; for(const t of data[a]){ const y=startYM(t,a); if(f===null||y<f) f=y; } return f; }
+function saldoAnterior(m,a){
+  const c=contas[a]; let base, from;
+  if(c&&c.desde){ base=c.saldoIni||0; from=ymOf(c.desde+'-01'); }
+  else { from=firstYM(a); if(from===null) return 0; base=0; }
+  let v=base;
+  if(m>=from){ for(let k=from;k<m;k++) v+=netAcc(k,a); }
+  else { for(let k=m;k<from;k++) v-=netAcc(k,a); }
+  return Math.round(v*100)/100;
+}
+function saldoAnt(m){ return accs().reduce((s,a)=>s+saldoAnterior(m,a),0); }
 function totals(m){
   const r={in:0,out:0,inv:0};
   for(const it of monthItems(m)){
@@ -511,7 +554,7 @@ function totals(m){
 /* ---------- storage (Firebase) ---------- */
 const FAM=(window.APP_CONFIG&&window.APP_CONFIG.familia)||'familia';
 let FBdb=null, me=null, unsubs=[], pendingRender=false, chatSynced='', chatT=null;
-const synced={lanc:new Map(), metas:new Map(), cartoes:new Map()};
+const synced={lanc:new Map(), metas:new Map(), cartoes:new Map(), contas:new Map()};
 function stable(v){
   if(Array.isArray(v)) return '['+v.map(stable).join(',')+']';
   if(v&&typeof v==='object') return '{'+Object.keys(v).filter(k=>v[k]!==undefined).sort().map(k=>JSON.stringify(k)+':'+stable(v[k])).join(',')+'}';
@@ -527,6 +570,11 @@ function persist(){
   const curM=new Map(); for(const a of ['pf','pj']) for(const m of metas[a]) curM.set(a+'_'+m.id,{...m,acc:a});
   for(const [k,m] of curM){ const s=stable(m); if(synced.metas.get(k)!==s){ ops.push(['set',FB.doc(col('metas'),k),m]); synced.metas.set(k,s);} }
   for(const k of [...synced.metas.keys()]) if(!curM.has(k)){ ops.push(['del',FB.doc(col('metas'),k)]); synced.metas.delete(k); }
+  for(const a of ['pf','pj']){
+    const c=contas[a], k=a;
+    if(c){ const v={...c,acc:a}, s2=stable(v); if(synced.contas.get(k)!==s2){ ops.push(['set',FB.doc(col('contas'),k),v]); synced.contas.set(k,s2);} }
+    else if(synced.contas.has(k)){ ops.push(['del',FB.doc(col('contas'),k)]); synced.contas.delete(k); }
+  }
   const curC=new Map(); for(const a of ['pf','pj']) for(const c of cartoes[a]) curC.set(a+'_'+c.id,{...c,acc:a});
   for(const [k,c] of curC){ const s=stable(c); if(synced.cartoes.get(k)!==s){ ops.push(['set',FB.doc(col('cartoes'),k),c]); synced.cartoes.set(k,s);} }
   for(const k of [...synced.cartoes.keys()]) if(!curC.has(k)){ ops.push(['del',FB.doc(col('cartoes'),k)]); synced.cartoes.delete(k); }
@@ -562,6 +610,11 @@ function startData(user){
     snap.forEach(d=>{ const o=d.data(); const a=o.acc==='pj'?'pj':'pf'; const t={...o}; delete t.acc; if(!t.id) t.id=d.id.replace(/^(pf|pj)_/,''); nd[a].push(t); synced.lanc.set(a+'_'+t.id,stable({...t,acc:a})); });
     data=nd; gotL=true; syncStatus(snap); ready(); scheduleRender();
   },e=>{ gateError(fbErr(e)); }));
+  unsubs.push(FB.onSnapshot(col('contas'),snap=>{
+    const nc={pf:null,pj:null}; synced.contas=new Map();
+    snap.forEach(d=>{ const o=d.data(); const a=d.id==='pj'?'pj':(d.id==='pf'?'pf':null); if(!a) return; const c={saldoIni:Number(o.saldoIni)||0, desde:o.desde||''}; nc[a]=c; synced.contas.set(a,stable({...c,acc:a})); });
+    contas=nc; scheduleRender();
+  },e=>{ gateError(fbErr(e)); }));
   unsubs.push(FB.onSnapshot(col('cartoes'),snap=>{
     const nc={pf:[],pj:[]}; synced.cartoes=new Map();
     snap.forEach(d=>{ const o=d.data(); const a=o.acc==='pj'?'pj':'pf'; const c={...o}; delete c.acc; nc[a].push(c); synced.cartoes.set(a+'_'+c.id,stable({...c,acc:a})); });
@@ -582,7 +635,7 @@ function gateError(msg){
 }
 function showLogin(){
   me=null; unsubs.forEach(u=>u()); unsubs=[];
-  data={pf:[],pj:[]}; metas={pf:[],pj:[]}; cartoes={pf:[],pj:[]}; chat=[]; synced.lanc=new Map(); synced.metas=new Map(); synced.cartoes=new Map();
+  data={pf:[],pj:[]}; metas={pf:[],pj:[]}; cartoes={pf:[],pj:[]}; contas={pf:null,pj:null}; chat=[]; synced.lanc=new Map(); synced.metas=new Map(); synced.cartoes=new Map(); synced.contas=new Map();
   const g=document.getElementById('gate'); g.hidden=false;
   const o=document.getElementById('gateOut'); if(o) o.remove();
   document.getElementById('gateMsg').textContent='Entre com seu e-mail e senha.';
@@ -617,7 +670,7 @@ document.getElementById('gear').onclick=()=>{ document.getElementById('menuUser'
 document.getElementById('menuClose').onclick=()=>menuDlg.close();
 document.getElementById('btnLogout').onclick=()=>{ menuDlg.close(); if(window.FB&&FB.signOut) FB.signOut(FB.auth); };
 document.getElementById('btnExport').onclick=()=>{
-  const blob=new Blob([JSON.stringify({app:'meu-caixa',version:1,exportado:new Date().toISOString(),data,metas,cartoes,chat},null,2)],{type:'application/json'});
+  const blob=new Blob([JSON.stringify({app:'meu-caixa',version:1,exportado:new Date().toISOString(),data,metas,cartoes,contas,chat},null,2)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='meu-caixa-backup-'+today()+'.json'; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),5000);
 };
@@ -633,13 +686,14 @@ document.getElementById('fileImport').onchange=async e=>{
       for(const t of (src[a]||[])) if(t&&t.id&&!data[a].some(x=>x.id===t.id)){ data[a].push(t); nL++; }
       for(const m of (sm[a]||[])) if(m&&m.id&&!metas[a].some(x=>x.id===m.id)){ metas[a].push(m); nM++; }
       for(const c of ((o.cartoes||{})[a]||[])) if(c&&c.id&&!cartoes[a].some(x=>x.id===c.id)) cartoes[a].push(c);
+      if(o.contas&&o.contas[a]&&!contas[a]) contas[a]=o.contas[a];
     }
     if(Array.isArray(o.chat)&&!chat.length) chat=o.chat;
     persist(); menuDlg.close(); render();
     toast(nL||nM?`Importado: ${nL} lançamento(s) e ${nM} meta(s)`:'Nada novo para importar');
   }catch(err){ toast('Esse arquivo não é um backup válido'); }
 };
-['dlg','mdlg','askDlg','menuDlg','cdlg'].forEach(id=>document.getElementById(id).addEventListener('close',()=>{ setTimeout(()=>{ if(pendingRender&&!document.querySelector('dialog[open]')){ pendingRender=false; render(); } },0); }));
+['dlg','mdlg','askDlg','menuDlg','cdlg','sdlg'].forEach(id=>document.getElementById(id).addEventListener('close',()=>{ setTimeout(()=>{ if(pendingRender&&!document.querySelector('dialog[open]')){ pendingRender=false; render(); } },0); }));
 
 /* ---------- charts ---------- */
 function killCharts(){while(charts.length) charts.pop().destroy();}
@@ -684,12 +738,15 @@ function render(){
   else renderType(st.tab);
 }
 function strip(t){
-  const saldo=t.in-t.out-t.inv;
-  return `<section class="strip">
-    <div><small>Entrou</small><b class="num c-in">${brl(t.in)}</b></div>
-    <div><small>Saiu</small><b class="num c-out">${brl(t.out)}</b></div>
-    <div><small>Investido</small><b class="num c-inv">${brl(t.inv)}</b></div>
-    <div><small>Sobrou</small><b class="num" style="color:${saldo<0?'var(--out)':'var(--ink)'}">${brl(saldo)}</b></div></section>`;
+  const ant=saldoAnt(st.m), final=ant+t.in-t.out-t.inv;
+  const missing=accs().filter(a=>!contas[a]);
+  return `<section class="strip five">
+    <button class="cell ant" id="editSaldo" aria-label="Ajustar saldo"><small>Saldo do mês anterior</small><b class="num" style="color:${ant<0?'var(--out)':'var(--ink)'}">${brl(ant)}</b></button>
+    <div><small>Entrou</small><b class="num c-in">+${brl(t.in)}</b></div>
+    <div><small>Saiu</small><b class="num c-out">−${brl(t.out)}</b></div>
+    <div><small>Investido</small><b class="num c-inv">−${brl(t.inv)}</b></div>
+    <div class="total"><small>Saldo em conta</small><b class="num" style="color:${final<0?'var(--out)':'var(--ink)'}">${brl(final)}</b></div></section>
+    ${missing.length?`<div class="saldo-hint"><span>Informe quanto tem na conta ${missing.map(a=>a.toUpperCase()).join(' e ')} para o saldo ficar igual ao do banco.</span><button class="chip on" id="setSaldo">Informar saldo</button></div>`:''}`;
 }
 function renderGeral(){
   const t=totals(st.m);
@@ -702,6 +759,7 @@ function renderGeral(){
   </div>
   <div class="panel" style="margin-top:16px"><h3>Entrou x saiu</h3><p class="sub">Últimos 6 meses</p><div class="chartbox tall"><canvas id="b1"></canvas></div></div>
   <div id="filt"></div>`;
+  { const b1=document.getElementById('editSaldo'), b2=document.getElementById('setSaldo'); if(b1) b1.onclick=()=>openSaldo(); if(b2) b2.onclick=()=>openSaldo(accs().find(a=>!contas[a])); }
   if(saidas.length){
     const g=group(saidas,i=>i.cat);
     pie(document.getElementById('p1'),g.labels,g.values,cat=>{st.catFilter=cat;showFilter(saidas);});
@@ -1091,6 +1149,29 @@ document.getElementById('cDel').onclick=async()=>{
 };
 document.getElementById('cClose').onclick=()=>cdlg.close();
 
+/* diálogo do saldo */
+const sdlg=document.getElementById('sdlg'), sfrm=document.getElementById('sfrm');
+function fillSaldo(){
+  const a=sfrm.acc.value, c=contas[a];
+  sfrm.desde.value = c&&c.desde ? c.desde : ymKey(ymNow());
+  sfrm.valor.value = c ? String(c.saldoIni).replace('.',',') : '';
+  document.getElementById('sDel').hidden=!c;
+}
+function openSaldo(acc){
+  sfrm.reset(); sfrm.acc.value = acc || (st.acc==='all'?'pf':st.acc);
+  fillSaldo(); sdlg.showModal(); setTimeout(()=>sfrm.valor.focus(),50);
+}
+sfrm.addEventListener('change',e=>{ if(e.target.name==='acc') fillSaldo(); });
+sfrm.onsubmit=e=>{
+  e.preventDefault();
+  const v=parseMoney(sfrm.valor.value);
+  if(!isFinite(v)){ toast('Digite o valor do saldo'); sfrm.valor.focus(); return; }
+  contas[sfrm.acc.value]={saldoIni:v, desde:sfrm.desde.value||ymKey(ymNow())};
+  persist(); sdlg.close(); render(); toast('Saldo salvo');
+};
+document.getElementById('sDel').onclick=()=>{ contas[sfrm.acc.value]=null; persist(); sdlg.close(); render(); toast('Saldo removido'); };
+document.getElementById('sClose').onclick=()=>sdlg.close();
+
 function renderParcelas(){
   const all=[];
   for(const a of accs()) for(const t of data[a]) if(t.n>1) all.push({...t,acc:a});
@@ -1330,7 +1411,8 @@ function botReply(text){
   if(/^(oi|ola|olá|bom dia|boa tarde|boa noite|ajuda|help|\?)/.test(low)) return {text:'Oi! Me manda um gasto do jeito que você falaria. Exemplos:\n\nmercado 230,50\nifood 48 pj\ntv 2400 em 10x\ninternet 120 fixa\nrecebi 5000 cliente pj\ntesouro 500\nifood 60 cartão\neuropa 1000 (guarda na sua meta)\n\nTambém entendo "resumo" e "desfazer".'};
   if(/^resumo|^saldo/.test(low)){
     const t=totals(ymNow()); const lbl=st.acc==='all'?'PF + PJ':st.acc.toUpperCase();
-    return {text:`Resumo de ${ymLabel(ymNow())} (${lbl}):\n\nEntrou ${brl(t.in)}\nSaiu ${brl(t.out)}\nInvestido ${brl(t.inv)}\nSobrou ${brl(t.in-t.out-t.inv)}`};
+    const ant=saldoAnt(ymNow());
+    return {text:`Resumo de ${ymLabel(ymNow())} (${lbl}):\n\nSaldo do mês anterior ${brl(ant)}\nEntrou ${brl(t.in)}\nSaiu ${brl(t.out)}\nInvestido ${brl(t.inv)}\n\nSaldo em conta ${brl(ant+t.in-t.out-t.inv)}`};
   }
   if(/^desfazer/.test(low)){
     const last=[...chat].reverse().find(m=>m.ref&&!m.undone);
