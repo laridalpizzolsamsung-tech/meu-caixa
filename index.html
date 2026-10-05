@@ -842,7 +842,8 @@ function renderGeral(){
   const items=monthItems(st.m);
   const single=st.acc!=='all';
   const trOuts= single ? transfersOut(st.m,st.acc).map(i=>({...i,cat:'Transferência para '+other(st.acc).toUpperCase()})) : [];
-  const saidas=items.filter(i=>i.type==='fixa'||i.type==='variavel').concat(trOuts);
+  const faturas=faturaLines(st.m);
+  const saidas=semCartao(items).filter(i=>i.type==='fixa'||i.type==='variavel').concat(faturas).concat(trOuts);
   const trList = single ? transfersOut(st.m,st.acc).concat(transfersIn(st.m,st.acc)) : items.filter(i=>i.type==='transferencia');
   view.innerHTML = strip(t) + `
   <div class="grid2">
@@ -859,12 +860,13 @@ function renderGeral(){
     const g=group(saidas,i=>i.cat);
     pie(document.getElementById('p1'),g.labels,g.values,cat=>{st.catFilter=cat;showFilter(saidas);});
   } else document.getElementById('p1').parentElement.innerHTML=emptyMsg('Nenhuma saída neste mês.');
-  const fx=saidas.filter(i=>i.type==='fixa').reduce((a,b)=>a+b.amount,0);
+  const fx=saidas.filter(i=>i.type==='fixa'&&!i.fatura).reduce((a,b)=>a+b.amount,0);
+  const ccTot=faturas.reduce((a,b)=>a+b.amount,0);
   const vr=saidas.filter(i=>i.type==='variavel').reduce((a,b)=>a+b.amount,0);
   const sobra=Math.max(0,t.in-t.out-t.inv);
-  const L=[],V=[];[['Contas fixas',fx],['Variáveis',vr],['Investimentos',t.inv],['Transferido para '+other(st.acc).toUpperCase(),t.tout],['Sobrou',sobra]].forEach(([l,v])=>{if(v>0){L.push(l);V.push(Math.round(v*100)/100);}});
+  const L=[],V=[];[['Contas fixas',fx],['Variáveis',vr],['Cartão de crédito',ccTot],['Investimentos',t.inv],['Transferido para '+other(st.acc).toUpperCase(),t.tout],['Sobrou',sobra]].forEach(([l,v])=>{if(v>0){L.push(l);V.push(Math.round(v*100)/100);}});
   { const ge=document.getElementById('goExtrato'); if(ge) ge.onclick=()=>{st.tab='extrato';st.exF='todos';render();window.scrollTo({top:0});}; }
-  if(V.length) pie(document.getElementById('p2'),L,V,lbl=>{const map={'Contas fixas':'fixa','Variáveis':'variavel','Investimentos':'investimento'};if(map[lbl]){st.tab=map[lbl];render();} else if(/^Transferido/.test(lbl)){st.tab='extrato';st.exF='transf';render();}});
+  if(V.length) pie(document.getElementById('p2'),L,V,lbl=>{const map={'Contas fixas':'fixa','Variáveis':'variavel','Investimentos':'investimento','Cartão de crédito':'cartao'};if(map[lbl]){st.tab=map[lbl];render();} else if(/^Transferido/.test(lbl)){st.tab='extrato';st.exF='transf';render();}});
   else document.getElementById('p2').parentElement.innerHTML=emptyMsg('Nada lançado neste mês.');
   const labels=[],ins=[],outs=[];
   for(let k=5;k>=0;k--){const mm=st.m-k;const tt=totals(mm);labels.push(ymShort(mm));ins.push(Math.round(tt.in*100)/100);outs.push(Math.round(tt.out*100)/100);}
@@ -1002,7 +1004,7 @@ function recvCards(items){
     ${entrou.length?`<div class="listhead"><h3>Já entrou</h3><span class="chip">${brl(entrou.reduce((a,b)=>a+b.amount,0))}</span></div><div class="recv-cards">${entrou.map(card).join('')}</div>`:''}`;
 }
 function renderType(type){
-  const items=monthItems(st.m,type).concat(type==='recebimento'&&st.acc!=='all'?transfersIn(st.m,st.acc):[]);
+  const items=semCartao(monthItems(st.m,type)).concat(type==='recebimento'&&st.acc!=='all'?transfersIn(st.m,st.acc):[]).concat(type==='fixa'?faturaLines(st.m):[]);
   const total=items.reduce((a,b)=>a+b.amount,0);
   const cls=type==='recebimento'?'c-in':type==='investimento'?'c-inv':'c-out';
   const filtered=st.catFilter?items.filter(i=>(i.cat||'Outros')===st.catFilter):items;
@@ -1013,7 +1015,7 @@ function renderType(type){
     view._recvBig = total-prev;
   }
   if(type==='fixa'){
-    const pago=items.filter(i=>(i.pagos||[]).includes(ymKey(st.m))).reduce((a,b)=>a+b.amount,0);
+    const pago=items.filter(i=>i.fatura?i.paga:(i.pagos||[]).includes(ymKey(st.m))).reduce((a,b)=>a+b.amount,0);
     extra=`<p class="sub">Pago: <b class="num">${brl(pago)}</b> de ${brl(total)}</p>`;
   }
   view.innerHTML=(type==='investimento'?metasHTML():'')+(type==='recebimento'?recvCards(items):'')+`<div class="grid2" style="margin-top:18px">
@@ -1235,9 +1237,33 @@ function progHTML(idx,n,compact){
     : `<div class="track cont"><i style="width:${Math.min(100,idx/n*100)}%"></i></div>`;
   return `<div class="prog">${compact?`<div class="row"><span>Parcela</span><b>${String(idx).padStart(2,'0')}/${String(n).padStart(2,'0')}</b></div>`:''}${segs}</div>`;
 }
+/* As compras no cartão ficam só na aba Cartão. Nas outras abas aparece uma linha por fatura. */
+function semCartao(items){ return items.filter(i=>!cardOf(i,i.acc)); }
+function faturaLines(m){
+  const out=[];
+  for(const a of accs()) for(const c of cartoes[a]){
+    const its=faturaItems(c,a,m); if(!its.length) continue;
+    const fi=faturaInfo(c,m);
+    out.push({fatura:true, card:c, acc:a, id:'fat_'+c.id, type:'fixa', cat:'Cartão de crédito', name:'Fatura '+c.nome,
+      amount:Math.round(its.reduce((x,y)=>x+y.amount,0)*100)/100, count:its.length, paga:fi.paga, due:fi.due,
+      date:ymKey(m)+'-'+String(fi.due.getDate()).padStart(2,'0')});
+  }
+  return out;
+}
+function faturaRow(f){
+  const dd=f.due.toLocaleDateString('pt-BR',{day:'2-digit',month:'short'}).replace(/\.$/,'');
+  return `<li data-fat="${f.card.id}" data-acc="${f.acc}">
+    <span class="dot" style="background:var(--out)"></span>
+    <div><div class="t">💳 ${esc(f.name)}${st.acc==='all'?`<span class="tag ${f.acc}">${f.acc.toUpperCase()}</span>`:''}</div>
+      <div class="m">Vence ${dd}, ${f.count} compra${f.count>1?'s':''}. Toque para ver na aba Cartão.</div>
+      <label class="paid" data-stop><input type="checkbox" data-payfat="${f.card.id}" data-acc="${f.acc}" ${f.paga?'checked':''}> Fatura paga</label>
+    </div>
+    <div class="v num" style="color:var(--out)">−${brl(f.amount)}</div></li>`;
+}
 function txList(items){
   const mk=ymKey(st.m);
   return `<ul class="tx">${items.map(i=>{
+    if(i.fatura) return faturaRow(i);
     const isT=i.type==='transferencia', tIn=isT&&i.incoming, tOut=isT&&!i.incoming&&st.acc!=='all';
     const col=isT?(tIn?'var(--in)':tOut?'var(--out)':'var(--muted)'):i.type==='recebimento'?'var(--in)':i.type==='investimento'?'var(--inv)':'var(--out)';
     const fut=isFuture(i,st.m);
@@ -1257,7 +1283,16 @@ function txList(items){
       <div class="v num" style="color:${col};${fut?'opacity:.6':''}">${sign}${brl(i.amount)}</div></li>`;}).join('')}</ul>`;
 }
 function bindList(root){
-  root.querySelectorAll('ul.tx li').forEach(li=>{
+  root.querySelectorAll('ul.tx li[data-fat]').forEach(li=>{
+    li.onclick=e=>{ if(e.target.closest('[data-stop]')) return; st.card=li.dataset.fat; st.tab='cartao'; st.catFilter=null; render(); window.scrollTo({top:0}); };
+    const cb=li.querySelector('[data-payfat]');
+    if(cb) cb.onchange=()=>{
+      const c=cartoes[cb.dataset.acc].find(x=>x.id===cb.dataset.payfat); if(!c) return;
+      const k=ymKey(st.m); c.pagas=(c.pagas||[]).filter(x=>x!==k); if(cb.checked) c.pagas.push(k);
+      persist(); render(); toast(cb.checked?'Fatura marcada como paga':'Pagamento desmarcado');
+    };
+  });
+  root.querySelectorAll('ul.tx li:not([data-fat])').forEach(li=>{
     li.onclick=e=>{ if(e.target.closest('[data-stop]')) return; openForm(li.dataset.acc, li.dataset.id); };
     const cb=li.querySelector('[data-pay]');
     if(cb) cb.onchange=()=>{
@@ -1399,7 +1434,7 @@ document.getElementById('sClose').onclick=()=>sdlg.close();
 
 function renderParcelas(){
   const all=[];
-  for(const a of accs()) for(const t of data[a]) if(t.n>1) all.push({...t,acc:a});
+  for(const a of accs()) for(const t of data[a]) if(t.n>1 && !cardOf(t,a)) all.push({...t,acc:a});
   const rows=all.map(t=>{const s=startYM(t,t.acc);const idx=Math.max(0,Math.min(t.n,st.m-s+1));return {...t,idx,parc:Math.round(t.valor/t.n*100)/100,start:s};});
   const active=rows.filter(r=>r.idx>=1&&r.idx<=r.n && st.m<=r.start+r.n-1);
   const future=rows.filter(r=>r.idx===0);
