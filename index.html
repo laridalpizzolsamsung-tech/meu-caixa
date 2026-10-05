@@ -374,9 +374,9 @@ body[data-acc="all"] .btn{color:var(--bg)}
   </form>
 </dialog>
 <dialog id="sdlg">
-  <div class="mhead"><h2>Saldo em conta</h2><button class="x" id="sClose" aria-label="Fechar">×</button></div>
+  <div class="mhead"><h2>Saldo da conta PJ</h2><button class="x" id="sClose" aria-label="Fechar">×</button></div>
   <form class="f" id="sfrm">
-    <div class="seg two" role="radiogroup" aria-label="Conta">
+    <div class="seg two" role="radiogroup" aria-label="Conta" hidden>
       <label><input type="radio" name="acc" value="pf" checked><span>Conta PF</span></label>
       <label><input type="radio" name="acc" value="pj"><span>Conta PJ</span></label>
     </div>
@@ -551,7 +551,9 @@ function saldoAnterior(m,a){
   else { for(let k=m;k<from;k++) v-=netAcc(k,a); }
   return Math.round(v*100)/100;
 }
-function saldoAnt(m){ return accs().reduce((s,a)=>s+saldoAnterior(m,a),0); }
+const SALDO_ACCS=['pj'];   // contas que carregam o saldo de um mês para o outro
+function saldoAccs(){ return accs().filter(a=>SALDO_ACCS.includes(a)); }
+function saldoAnt(m){ return saldoAccs().reduce((s,a)=>s+saldoAnterior(m,a),0); }
 function totals(m){
   const r={in:0,out:0,inv:0,tin:0,tout:0};
   const single=st.acc!=='all';
@@ -752,10 +754,18 @@ function render(){
   else renderType(st.tab);
 }
 function strip(t){
+  if(!saldoAccs().length){
+    const sob=t.in-t.out-t.inv;
+    return `<section class="strip">
+    <div><small>Entrou</small><b class="num c-in">+${brl(t.in)}</b>${t.tin?`<span class="sub2">inclui ${brl(t.tin)} vindo da ${other(st.acc).toUpperCase()}</span>`:''}</div>
+    <div><small>Saiu</small><b class="num c-out">−${brl(t.out)}</b>${t.tout?`<span class="sub2">inclui ${brl(t.tout)} para a ${other(st.acc).toUpperCase()}</span>`:''}</div>
+    <div><small>Investido</small><b class="num c-inv">−${brl(t.inv)}</b></div>
+    <div><small>Sobrou no mês</small><b class="num" style="color:${sob<0?'var(--out)':'var(--ink)'}">${brl(sob)}</b></div></section>`;
+  }
   const ant=saldoAnt(st.m), final=ant+t.in-t.out-t.inv;
-  const missing=accs().filter(a=>!contas[a]);
+  const missing=saldoAccs().filter(a=>!contas[a]);
   return `<section class="strip five">
-    <button class="cell ant" id="editSaldo" aria-label="Ajustar saldo"><small>Saldo do mês anterior</small><b class="num" style="color:${ant<0?'var(--out)':'var(--ink)'}">${brl(ant)}</b></button>
+    <button class="cell ant" id="editSaldo" aria-label="Ajustar saldo"><small>Saldo do mês anterior${st.acc==='all'?' (PJ)':''}</small><b class="num" style="color:${ant<0?'var(--out)':'var(--ink)'}">${brl(ant)}</b></button>
     <div><small>Entrou</small><b class="num c-in">+${brl(t.in)}</b>${t.tin?`<span class="sub2">inclui ${brl(t.tin)} vindo da ${other(st.acc).toUpperCase()}</span>`:''}</div>
     <div><small>Saiu</small><b class="num c-out">−${brl(t.out)}</b>${t.tout?`<span class="sub2">inclui ${brl(t.tout)} para a ${other(st.acc).toUpperCase()}</span>`:''}</div>
     <div><small>Investido</small><b class="num c-inv">−${brl(t.inv)}</b></div>
@@ -778,7 +788,7 @@ function renderGeral(){
   <div id="filt"></div>
   ${trList.length?`<div class="listhead"><h3>Transferências entre contas</h3></div>${txList(trList)}${single?'':'<p class="sub" style="margin-top:8px">Na visão Tudo, as transferências não contam como entrada nem saída, porque o dinheiro só mudou de conta.</p>'}`:''}`;
   bindList(view);
-  { const b1=document.getElementById('editSaldo'), b2=document.getElementById('setSaldo'); if(b1) b1.onclick=()=>openSaldo(); if(b2) b2.onclick=()=>openSaldo(accs().find(a=>!contas[a])); }
+  { const b1=document.getElementById('editSaldo'), b2=document.getElementById('setSaldo'); if(b1) b1.onclick=()=>openSaldo('pj'); if(b2) b2.onclick=()=>openSaldo('pj'); }
   if(saidas.length){
     const g=group(saidas,i=>i.cat);
     pie(document.getElementById('p1'),g.labels,g.values,cat=>{st.catFilter=cat;showFilter(saidas);});
@@ -1446,8 +1456,9 @@ function botReply(text){
   if(/^(oi|ola|olá|bom dia|boa tarde|boa noite|ajuda|help|\?)/.test(low)) return {text:'Oi! Me manda um gasto do jeito que você falaria. Exemplos:\n\nmercado 230,50\nifood 48 pj\ntv 2400 em 10x\ninternet 120 fixa\nrecebi 5000 cliente pj\ntesouro 500\nifood 60 cartão\nrecebi 4400 youtube pj\ntransferi salário 1442,69 pra pf todo mês\neuropa 1000 (guarda na sua meta)\n\nTambém entendo "resumo" e "desfazer".'};
   if(/^resumo|^saldo/.test(low)){
     const t=totals(ymNow()); const lbl=st.acc==='all'?'PF + PJ':st.acc.toUpperCase();
+    if(!saldoAccs().length) return {text:`Resumo de ${ymLabel(ymNow())} (${lbl}):\n\nEntrou ${brl(t.in)}\nSaiu ${brl(t.out)}\nInvestido ${brl(t.inv)}\nSobrou no mês ${brl(t.in-t.out-t.inv)}`};
     const ant=saldoAnt(ymNow());
-    return {text:`Resumo de ${ymLabel(ymNow())} (${lbl}):\n\nSaldo do mês anterior ${brl(ant)}\nEntrou ${brl(t.in)}\nSaiu ${brl(t.out)}\nInvestido ${brl(t.inv)}\n\nSaldo em conta ${brl(ant+t.in-t.out-t.inv)}`};
+    return {text:`Resumo de ${ymLabel(ymNow())} (${lbl}):\n\nSaldo do mês anterior${st.acc==='all'?' (PJ)':''} ${brl(ant)}\nEntrou ${brl(t.in)}\nSaiu ${brl(t.out)}\nInvestido ${brl(t.inv)}\n\nSaldo em conta ${brl(ant+t.in-t.out-t.inv)}`};
   }
   if(/^desfazer/.test(low)){
     const last=[...chat].reverse().find(m=>m.ref&&!m.undone);
