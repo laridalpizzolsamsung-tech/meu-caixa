@@ -118,8 +118,19 @@ nav.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(-
 .strip .total b{font-size:clamp(20px,3.8vw,30px)}
 .strip button.cell{all:unset;box-sizing:border-box;display:block;background:var(--surface);padding:14px 16px;cursor:pointer}
 .strip button.cell:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
-.strip button.cell small::after{content:" ✎";opacity:.6}
-@media (max-width:760px){.strip.five{grid-template-columns:1fr 1fr}.strip.five .ant{grid-column:span 2}}
+.strip button.cell.ant small::after{content:" ✎";opacity:.6}
+.strip button.cell.soon small::after{content:" ›";opacity:.6}
+.strip.six{grid-template-columns:repeat(6,1fr)}
+.strip .soon{background:color-mix(in srgb,var(--in) 10%,var(--surface))}
+@media (max-width:760px){.strip.five,.strip.six{grid-template-columns:1fr 1fr}.strip.five .ant,.strip.six .ant,.strip.six .total{grid-column:span 2}}
+.recv-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.recv{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px;cursor:pointer}
+.recv.done{border-color:color-mix(in srgb,var(--in) 40%,var(--line))}
+.recv .hd{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:10px}
+.recv .val{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:24px;color:var(--in);white-space:nowrap}
+.recv .when{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-top:10px}
+.recv .when b{color:var(--ink)}
+.track.cont.green i{background:var(--in)}
 .saldo-hint{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--surface);border:1px dashed var(--line);border-radius:12px;padding:10px 14px;margin:-6px 0 18px;font-size:14px;color:var(--muted)}
 
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
@@ -342,7 +353,7 @@ body[data-acc="all"] .btn{color:var(--bg)}
     <label class="fl"><span>Nome</span><input name="name" required placeholder="Ex.: Mercado, Internet, Salário"></label>
     <div class="row2">
       <label class="fl"><span id="valLabel">Valor (R$)</span><input name="valor" inputmode="decimal" required placeholder="0,00"></label>
-      <label class="fl"><span>Data</span><input name="date" type="date" required></label>
+      <label class="fl"><span id="dateLbl">Data</span><input name="date" type="date" required></label>
     </div>
     <label class="fl"><span>Categoria</span><input name="cat" list="cats" placeholder="Ex.: Alimentação"></label>
     <datalist id="cats"></datalist>
@@ -363,6 +374,7 @@ body[data-acc="all"] .btn{color:var(--bg)}
     </div>
     <p class="hint" id="parcHint" hidden></p>
     <label class="check" id="recWrap"><input type="checkbox" name="rec" checked> Repetir todo mês</label>
+    <p class="hint" id="dateHint" hidden></p>
     <label class="fl"><span>Descrição (opcional)</span><textarea name="desc" placeholder="Anotações, detalhes, nº do pedido..."></textarea></label>
     <div class="actions">
       <button type="button" class="btn ghost" id="btnDel" hidden>Excluir</button>
@@ -815,9 +827,11 @@ function strip(t){
   const inR=t.in-t.inF, outR=t.out-t.outF, invR=t.inv-t.invF, hoje=ant+inR-outR-invR;
   const missing=saldoAccs().filter(a=>!contas[a]);
   const pfNote = st.acc==='all' ? (()=>{ const sv=st.acc; st.acc='pf'; const cs=contasStatus(st.m); st.acc=sv; return cs.total?`<div class="saldo-hint"><span>Contas da PF em ${ymLabel(st.m).toLowerCase()}: ${brl(cs.total)}, já pago ${brl(cs.pago)}, falta pagar <b style="color:var(--out)">${brl(cs.falta)}</b>. Elas são pagas com os repasses que saem da PJ.</span></div>`:''; })() : '';
-  return `<section class="strip five">
+  const showSoon = (cur && t.inF>0);
+  return `<section class="strip ${showSoon?'six':'five'}">
     <button class="cell ant" id="editSaldo" aria-label="Ajustar saldo"><small>Saldo do mês anterior${st.acc==='all'?' (PJ)':''}</small><b class="num" style="color:${ant<0?'var(--out)':'var(--ink)'}">${brl(ant)}</b></button>
-    <div><small>${fut?'Entrada prevista':'Entrou'}</small><b class="num c-in">+${brl(cur?inR:t.in)}</b>${cur&&t.inF?`<span class="sub2">+ ${brl(t.inF)} previsto até o fim do mês</span>`:''}</div>
+    <div><small>${fut?'Entrada prevista':'Entrou'}</small><b class="num c-in">+${brl(cur?inR:t.in)}</b></div>
+    ${showSoon?`<button class="cell soon" id="goReceber" aria-label="Ver recebimentos a entrar"><small>A entrar</small><b class="num" style="color:var(--in);opacity:.75">${brl(t.inF)}</b><span class="sub2">ainda não está no saldo</span></button>`:''}
     <div><small>${fut?'Saída prevista':'Saiu'}</small><b class="num c-out">−${brl(cur?outR:t.out)}</b>${cur&&t.outF?`<span class="sub2">+ ${brl(t.outF)} previsto até o fim do mês</span>`:''}${t.tout&&!cur?`<span class="sub2">inclui ${brl(t.tout)} de transferências para a PF</span>`:''}</div>
     <div><small>${fut?'Investimento previsto':'Investido'}</small><b class="num c-inv">−${brl(cur?invR:t.inv)}</b>${cur&&t.invF?`<span class="sub2">+ ${brl(t.invF)} previsto</span>`:''}</div>
     <div class="total"><small>${cur?'Saldo hoje':fut?'Saldo previsto':'Saldo em conta'}${st.acc==='all'?' (PJ)':''}</small><b class="num" style="color:${(cur?hoje:final)<0?'var(--out)':'var(--ink)'}">${brl(cur?hoje:final)}</b>${cur&&(t.inF||t.outF||t.invF)?`<span class="sub2">no fim do mês: ${brl(final)}</span>`:''}</div></section>
@@ -840,7 +854,7 @@ function renderGeral(){
   <div id="filt"></div>
   ${trList.length?`<div class="listhead"><h3>Transferências entre contas</h3></div>${txList(trList)}${single?'':'<p class="sub" style="margin-top:8px">Na visão Tudo, as transferências não contam como entrada nem saída, porque o dinheiro só mudou de conta.</p>'}`:''}`;
   bindList(view);
-  { const b1=document.getElementById('editSaldo'), b2=document.getElementById('setSaldo'); if(b1) b1.onclick=()=>openSaldo('pj'); if(b2) b2.onclick=()=>openSaldo('pj'); }
+  { const b1=document.getElementById('editSaldo'), b2=document.getElementById('setSaldo'); if(b1) b1.onclick=()=>openSaldo('pj'); const gr=document.getElementById('goReceber'); if(gr) gr.onclick=()=>{st.tab='recebimento';render();window.scrollTo({top:0});}; if(b2) b2.onclick=()=>openSaldo('pj'); }
   if(saidas.length){
     const g=group(saidas,i=>i.cat);
     pie(document.getElementById('p1'),g.labels,g.values,cat=>{st.catFilter=cat;showFilter(saidas);});
@@ -964,6 +978,29 @@ function showFilter(saidas){
 }
 function emptyMsg(t){return `<div class="empty">${esc(t)}<br><button class="chip on" data-new>+ Lançar agora</button></div>`;}
 
+function recvCards(items){
+  if(!items.length) return '';
+  const m=st.m, now=ymNow(), today=new Date().getDate(), last=new Date(Math.floor(m/12),m%12+1,0).getDate();
+  const card=i=>{
+    const d=occDay(i,m), fut=isFuture(i,m);
+    const dataTxt=String(d).padStart(2,'0')+'/'+String(m%12+1).padStart(2,'0');
+    let pct, quando;
+    if(!fut){ pct=100; quando=`Entrou dia <b>${dataTxt}</b>`; }
+    else if(m===now){ const falta=d-today; pct=Math.max(4,Math.min(96,today/d*100)); quando=`Entra dia <b>${dataTxt}</b>`; i._falta=falta===1?'falta 1 dia':`faltam ${falta} dias`; }
+    else { pct=0; quando=`Entra dia <b>${dataTxt}</b>`; i._falta='em '+ymLabel(m).toLowerCase(); }
+    const tag=i.incoming?'⇄ da '+i.acc.toUpperCase():(i.cat||'Outros');
+    return `<div class="recv ${fut?'':'done'}" data-rid="${i.id}" data-acc="${i.acc}" tabindex="0">
+      <div class="hd"><div><div style="font-weight:700">${esc(i.name)}${st.acc==='all'?`<span class="tag ${i.acc}">${i.acc.toUpperCase()}</span>`:''}</div>
+        <div style="color:var(--muted);font-size:13px">${esc(tag)}${i.rec?', todo mês':''}</div></div>
+        <div class="val num" style="${fut?'opacity:.7':''}">${fut?'':'+'}${brl(i.amount)}</div></div>
+      <div class="track cont ${fut?'':'green'}"><i style="width:${pct}%"></i></div>
+      <div class="when"><span>${quando}</span><span>${fut?(i._falta||''):'✓ já está no saldo'}</span></div></div>`;
+  };
+  const aEntrar=items.filter(i=>isFuture(i,m)).sort((a,b)=>occDay(a,m)-occDay(b,m));
+  const entrou=items.filter(i=>!isFuture(i,m)).sort((a,b)=>occDay(a,m)-occDay(b,m));
+  return `${aEntrar.length?`<div class="listhead" style="margin-top:18px"><h3>A entrar</h3><span class="chip">${brl(aEntrar.reduce((a,b)=>a+b.amount,0))}</span></div><div class="recv-cards">${aEntrar.map(card).join('')}</div>`:''}
+    ${entrou.length?`<div class="listhead"><h3>Já entrou</h3><span class="chip">${brl(entrou.reduce((a,b)=>a+b.amount,0))}</span></div><div class="recv-cards">${entrou.map(card).join('')}</div>`:''}`;
+}
 function renderType(type){
   const items=monthItems(st.m,type).concat(type==='recebimento'&&st.acc!=='all'?transfersIn(st.m,st.acc):[]);
   const total=items.reduce((a,b)=>a+b.amount,0);
@@ -972,15 +1009,16 @@ function renderType(type){
   let extra='';
   if(type==='recebimento'){
     const prev=items.filter(i=>isFuture(i,st.m)).reduce((a,b)=>a+b.amount,0);
-    extra=`<p class="sub">Já recebido: <b class="num" style="color:var(--in)">${brl(total-prev)}</b>${prev?` &nbsp; Previsto: <b class="num">${brl(prev)}</b>`:''}</p>`;
+    extra=`<p class="sub">${prev?`Ainda a entrar: <b class="num">${brl(prev)}</b>. Total previsto no mês: ${brl(total)}`:'Tudo o que estava previsto já entrou.'}</p>`;
+    view._recvBig = total-prev;
   }
   if(type==='fixa'){
     const pago=items.filter(i=>(i.pagos||[]).includes(ymKey(st.m))).reduce((a,b)=>a+b.amount,0);
     extra=`<p class="sub">Pago: <b class="num">${brl(pago)}</b> de ${brl(total)}</p>`;
   }
-  view.innerHTML=(type==='investimento'?metasHTML():'')+`<div class="grid2" style="margin-top:18px">
-    <div class="panel"><h3>${TYPES[type]}</h3><p class="sub">${ymLabel(st.m)}</p>
-      <div class="num ${cls}" style="font-size:38px;font-weight:800;line-height:1.1">${brl(total)}</div>
+  view.innerHTML=(type==='investimento'?metasHTML():'')+(type==='recebimento'?recvCards(items):'')+`<div class="grid2" style="margin-top:18px">
+    <div class="panel"><h3>${type==='recebimento'?'Já recebido':TYPES[type]}</h3><p class="sub">${ymLabel(st.m)}</p>
+      <div class="num ${cls}" style="font-size:38px;font-weight:800;line-height:1.1">${brl(type==='recebimento'?view._recvBig:total)}</div>
       <p class="sub" style="margin-top:6px">${items.length} lançamento${items.length===1?'':'s'}</p>${extra}</div>
     <div class="panel"><h3>Por categoria</h3><p class="sub">Toque numa fatia para filtrar</p><div class="chartbox"><canvas id="pt"></canvas></div></div>
   </div>
@@ -991,6 +1029,7 @@ function renderType(type){
   const clr=document.getElementById('clr'); if(clr) clr.onclick=()=>{st.catFilter=null;render();};
   bindList(view);
   if(type==='investimento'){ bindMetas(); ensureLive(); }
+  view.querySelectorAll('.recv').forEach(c=>{ c.onclick=()=>openForm(c.dataset.acc,c.dataset.rid); c.onkeydown=e=>{ if(e.key==='Enter') openForm(c.dataset.acc,c.dataset.rid); }; });
 }
 /* ---------- cotação ao vivo (AwesomeAPI, com reserva no Frankfurter/BCE) ---------- */
 let live={state:'off', com:0, tur:0, ts:0, src:'', msg:''}, liveTimer=null, liveLast=0;
@@ -1201,7 +1240,8 @@ function txList(items){
   return `<ul class="tx">${items.map(i=>{
     const isT=i.type==='transferencia', tIn=isT&&i.incoming, tOut=isT&&!i.incoming&&st.acc!=='all';
     const col=isT?(tIn?'var(--in)':tOut?'var(--out)':'var(--muted)'):i.type==='recebimento'?'var(--in)':i.type==='investimento'?'var(--inv)':'var(--out)';
-    const sign=isT?(tIn?'+':tOut?'−':'⇄ '):i.type==='recebimento'?'+':i.type==='investimento'?'':'−';
+    const fut=isFuture(i,st.m);
+    const sign=isT?(tIn?'+':tOut?'−':'⇄ '):i.type==='recebimento'?(fut?'':'+'):i.type==='investimento'?'':'−';
     const mt=i.meta&&metas[i.acc].find(x=>x.id===i.meta);
     const accTag=(st.acc==='all'?`<span class="tag ${i.acc}">${i.acc.toUpperCase()}</span>`:'')+(mt?`<span class="tag meta-t">🎯 ${mt.name===i.name?'Meta':esc(mt.name)}</span>`:'');
     const cc=cardOf(i,i.acc);
@@ -1214,7 +1254,7 @@ function txList(items){
         ${i.n>1?progHTML(i.idx,i.n,true):''}
         ${i.type==='fixa'&&!cc?`<label class="paid" data-stop><input type="checkbox" data-pay ${ (i.pagos||[]).includes(mk)?'checked':''}> Pago</label>`:''}
       </div>
-      <div class="v num" style="color:${col}">${sign}${brl(i.amount)}</div></li>`;}).join('')}</ul>`;
+      <div class="v num" style="color:${col};${fut?'opacity:.6':''}">${sign}${brl(i.amount)}</div></li>`;}).join('')}</ul>`;
 }
 function bindList(root){
   root.querySelectorAll('ul.tx li').forEach(li=>{
@@ -1412,6 +1452,12 @@ function syncForm(){
     hint.textContent = n===1 ? '1 parcela conta como compra à vista.'
       : (v>0?n+'x de '+brl(v/n)+'. ':'')+'Parcela '+String(at).padStart(2,'0')+'/'+String(n).padStart(2,'0')+' na data escolhida; a 1ª foi em '+ymLabel(m0)+' e a última será em '+ymLabel(m0+n-1)+'.';
   } else hint.hidden=true;
+  { const dl=document.getElementById('dateLbl'), dh=document.getElementById('dateHint');
+    dl.textContent = type==='recebimento' ? 'Dia que entra' : (type==='fixa' ? 'Dia que vence' : 'Data');
+    const dv=frm.date.value, dday=dv?parseInt(dv.slice(8,10)):0;
+    if(dv && frm.rec.checked && !p && !document.getElementById('recWrap').hidden){ dh.hidden=false; dh.textContent=`Vai se repetir todo dia ${dday}, a partir de ${ymLabel(ymOf(dv)).toLowerCase()}.${type==='recebimento'&&dv>today()?' Até lá, aparece como "a entrar" e não conta no saldo.':''}`; }
+    else if(dv && dv>today() && type==='recebimento'){ dh.hidden=false; dh.textContent='Data futura: aparece como "a entrar" e só conta no saldo quando chegar o dia.'; }
+    else dh.hidden=true; }
   document.getElementById('cats').innerHTML=CATS[type].map(c=>`<option value="${esc(c)}">`).join('');
   const pw=document.getElementById('payWrap'), ph=document.getElementById('payHint'), cs=cartoes[frm.acc.value]||[];
   pw.hidden = !(type==='fixa'||type==='variavel') || !cs.length;
