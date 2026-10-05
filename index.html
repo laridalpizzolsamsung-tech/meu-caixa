@@ -138,6 +138,29 @@ nav.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(-
 .chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 10px;font-size:13px;color:var(--muted)}
 .chip.on{background:var(--acc-soft);border-color:transparent;color:var(--ink)}
 ul.tx{list-style:none;margin:0;padding:0;background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.ex-tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:18px 0 10px}
+.ex-tools input{flex:1;min-width:160px;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:8px 14px}
+.ex{list-style:none;margin:0;padding:0;background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.ex>li{border-top:1px solid var(--line)}
+.ex>li:first-child{border-top:0}
+.exrow{display:grid;grid-template-columns:48px minmax(0,1fr) auto;box-sizing:border-box;gap:10px;align-items:center;padding:11px 14px;cursor:pointer;width:100%;text-align:left;background:none;border:0;color:inherit;font:inherit}
+.exrow:hover{background:var(--surface2)}
+.exrow.static{cursor:default;background:var(--surface2)}
+.exday{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;line-height:1.1;color:var(--muted);text-align:center}
+.exday small{display:block;font-size:11px;font-weight:600}
+.exname{font-weight:600;overflow-wrap:anywhere}
+.exsub{font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+.exval{text-align:right;white-space:nowrap}
+.exval b{display:block;font-weight:700}
+.exval small{color:var(--muted);font-size:12px}
+.ex details>summary{list-style:none;width:100%}
+.ex details>summary::-webkit-details-marker{display:none}
+.ex details[open]>summary{background:var(--surface2)}
+.ex details ul.tx{border:0;border-radius:0;border-top:1px dashed var(--line)}
+.ex-foot{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden;margin-top:12px}
+.ex-foot div{background:var(--surface);padding:12px 14px;font-size:13px;color:var(--muted)}
+.ex-foot b{display:block;color:var(--ink);font-size:17px}
+@media (max-width:640px){.ex-foot{grid-template-columns:1fr 1fr}}
 ul.tx li{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:12px 14px;border-top:1px solid var(--line);cursor:pointer}
 ul.tx li:first-child{border-top:0}
 ul.tx li:hover{background:var(--surface2)}
@@ -284,6 +307,7 @@ body[data-acc="all"] .btn{color:var(--bg)}
     </div>
     <nav class="tabs" role="tablist">
       <button role="tab" data-t="geral" aria-selected="true">Visão geral</button>
+      <button role="tab" data-t="extrato">Extrato</button>
       <button role="tab" data-t="fixa">Contas fixas</button>
       <button role="tab" data-t="variavel">Variáveis</button>
       <button role="tab" data-t="parcelas">Parcelados</button>
@@ -462,7 +486,7 @@ let metas = {pf:[], pj:[]};
 let cartoes = {pf:[], pj:[]};
 let contas = {pf:null, pj:null};
 let editingMeta = null;
-let st = {acc:'pf', tab:'geral', m: ymNow(), catFilter:null};
+let st = {acc:'pf', tab:'geral', m: ymNow(), catFilter:null, exF:'todos', exQ:''};
 let editing = null;
 const charts = [];
 
@@ -531,6 +555,7 @@ function monthItems(m, type){
 }
 const other = a => a==='pf'?'pj':'pf';
 function transfersIn(m,a){
+  return [];   // a conta de destino não recebe a transferência: a PF só acompanha as contas a pagar
   const o=other(a);
   return data[o].filter(t=>t.type==='transferencia'&&(t.para||other(o))===a).map(t=>{const x=occ(t,m,o);return x?{...t,acc:o,...x,incoming:true}:null;}).filter(Boolean);
 }
@@ -550,6 +575,17 @@ function saldoAnterior(m,a){
   if(m>=from){ for(let k=from;k<m;k++) v+=netAcc(k,a); }
   else { for(let k=m;k<from;k++) v-=netAcc(k,a); }
   return Math.round(v*100)/100;
+}
+function paidState(i,m){
+  const cc=cardOf(i,i.acc);
+  if(cc) return faturaInfo(cc,m).paga;
+  if(i.type==='fixa') return (i.pagos||[]).includes(ymKey(m));
+  return true;
+}
+function contasStatus(m){
+  const r={total:0,pago:0,falta:0};
+  for(const i of monthItems(m)){ if(i.type!=='fixa'&&i.type!=='variavel') continue; r.total+=i.amount; if(paidState(i,m)) r.pago+=i.amount; else r.falta+=i.amount; }
+  return r;
 }
 const SALDO_ACCS=['pj'];   // contas que carregam o saldo de um mês para o outro
 function saldoAccs(){ return accs().filter(a=>SALDO_ACCS.includes(a)); }
@@ -748,6 +784,7 @@ function render(){
   document.getElementById('mLabel').textContent=ymLabel(st.m);
   document.getElementById('fab').hidden = st.tab==='whats';
   if(st.tab==='geral') renderGeral();
+  else if(st.tab==='extrato') renderExtrato();
   else if(st.tab==='parcelas') renderParcelas();
   else if(st.tab==='cartao') renderCartao();
   else if(st.tab==='whats') renderWhats();
@@ -755,12 +792,12 @@ function render(){
 }
 function strip(t){
   if(!saldoAccs().length){
-    const sob=t.in-t.out-t.inv;
+    const cs=contasStatus(st.m);
     return `<section class="strip">
-    <div><small>Entrou</small><b class="num c-in">+${brl(t.in)}</b>${t.tin?`<span class="sub2">inclui ${brl(t.tin)} vindo da ${other(st.acc).toUpperCase()}</span>`:''}</div>
-    <div><small>Saiu</small><b class="num c-out">−${brl(t.out)}</b>${t.tout?`<span class="sub2">inclui ${brl(t.tout)} para a ${other(st.acc).toUpperCase()}</span>`:''}</div>
-    <div><small>Investido</small><b class="num c-inv">−${brl(t.inv)}</b></div>
-    <div><small>Sobrou no mês</small><b class="num" style="color:${sob<0?'var(--out)':'var(--ink)'}">${brl(sob)}</b></div></section>`;
+    <div><small>Contas do mês</small><b class="num">${brl(cs.total)}</b></div>
+    <div><small>Já pago</small><b class="num c-in">${brl(cs.pago)}</b></div>
+    <div class="total"><small>Falta pagar</small><b class="num" style="color:${cs.falta>0?'var(--out)':'var(--in)'}">${brl(cs.falta)}</b></div>
+    <div><small>Investido</small><b class="num c-inv">${brl(t.inv)}</b>${t.in?`<span class="sub2">recebido na PF: ${brl(t.in)}</span>`:''}</div></section>`;
   }
   const ant=saldoAnt(st.m), final=ant+t.in-t.out-t.inv;
   const missing=saldoAccs().filter(a=>!contas[a]);
@@ -785,6 +822,7 @@ function renderGeral(){
     <div class="panel"><h3>Como o mês se dividiu</h3><p class="sub">Fixas, variáveis, investimentos e o que sobrou.</p><div class="chartbox"><canvas id="p2"></canvas></div></div>
   </div>
   <div class="panel" style="margin-top:16px"><h3>Entrou x saiu</h3><p class="sub">Últimos 6 meses</p><div class="chartbox tall"><canvas id="b1"></canvas></div></div>
+  <div style="text-align:center;margin-top:14px"><button class="chip on" id="goExtrato">Ver extrato do mês, lançamento por lançamento</button></div>
   <div id="filt"></div>
   ${trList.length?`<div class="listhead"><h3>Transferências entre contas</h3></div>${txList(trList)}${single?'':'<p class="sub" style="margin-top:8px">Na visão Tudo, as transferências não contam como entrada nem saída, porque o dinheiro só mudou de conta.</p>'}`:''}`;
   bindList(view);
@@ -797,12 +835,102 @@ function renderGeral(){
   const vr=saidas.filter(i=>i.type==='variavel').reduce((a,b)=>a+b.amount,0);
   const sobra=Math.max(0,t.in-t.out-t.inv);
   const L=[],V=[];[['Contas fixas',fx],['Variáveis',vr],['Investimentos',t.inv],['Transferido para '+other(st.acc).toUpperCase(),t.tout],['Sobrou',sobra]].forEach(([l,v])=>{if(v>0){L.push(l);V.push(Math.round(v*100)/100);}});
-  if(V.length) pie(document.getElementById('p2'),L,V,lbl=>{const map={'Contas fixas':'fixa','Variáveis':'variavel','Investimentos':'investimento'};if(map[lbl]){st.tab=map[lbl];render();}});
+  { const ge=document.getElementById('goExtrato'); if(ge) ge.onclick=()=>{st.tab='extrato';st.exF='todos';render();window.scrollTo({top:0});}; }
+  if(V.length) pie(document.getElementById('p2'),L,V,lbl=>{const map={'Contas fixas':'fixa','Variáveis':'variavel','Investimentos':'investimento'};if(map[lbl]){st.tab=map[lbl];render();} else if(/^Transferido/.test(lbl)){st.tab='extrato';st.exF='transf';render();}});
   else document.getElementById('p2').parentElement.innerHTML=emptyMsg('Nada lançado neste mês.');
   const labels=[],ins=[],outs=[];
   for(let k=5;k>=0;k--){const mm=st.m-k;const tt=totals(mm);labels.push(ymShort(mm));ins.push(Math.round(tt.in*100)/100);outs.push(Math.round(tt.out*100)/100);}
   bars(document.getElementById('b1'),labels,[{label:'Entrou',data:ins,backgroundColor:cssVar('--in')},{label:'Saiu',data:outs,backgroundColor:cssVar('--out')}]);
   if(st.catFilter) showFilter(saidas);
+}
+function dayIn(dateStr,m){ const last=new Date(Math.floor(m/12),m%12+1,0).getDate(); return Math.min(parseInt(dateStr.slice(8,10))||1,last); }
+function extratoRows(m){
+  const single=st.acc!=='all';
+  const raw=monthItems(m).concat(single?transfersIn(m,st.acc):[]);
+  const rows=[], cards=new Map();
+  for(const i of raw){
+    let eff, kind;
+    if(i.type==='recebimento'){ eff=i.amount; kind='entrada'; }
+    else if(i.type==='transferencia'){ kind='transf'; eff = !single ? 0 : (i.incoming ? i.amount : -i.amount); }
+    else { eff=-i.amount; kind = i.type==='investimento'?'invest':'saida'; }
+    const cc=cardOf(i,i.acc);
+    if(cc && kind==='saida'){
+      const k=i.acc+'_'+cc.id;
+      if(!cards.has(k)) cards.set(k,{group:true, card:cc, acc:i.acc, day:Math.min(cc.vence,new Date(Math.floor(m/12),m%12+1,0).getDate()), eff:0, kind:'saida', items:[], name:'Fatura '+cc.nome});
+      const g=cards.get(k); g.eff-=i.amount; g.items.push(i);
+      continue;
+    }
+    rows.push({i, eff, kind, day:dayIn(i.date,m), name:i.name});
+  }
+  for(const g of cards.values()){ g.eff=Math.round(g.eff*100)/100; rows.push(g); }
+  const ord={entrada:0,transf:1,saida:2,invest:3};
+  rows.sort((a,b)=>a.day-b.day || (ord[a.kind]-ord[b.kind]) || (a.name||'').localeCompare(b.name||''));
+  return rows;
+}
+function renderExtrato(){
+  const m=st.m, rows=extratoRows(m);
+  const temSaldo=saldoAccs().length>0;
+  const ini=temSaldo?saldoAnt(m):0;
+  let run=ini, totIn=0, totOut=0;
+  for(const r of rows){ run+=r.eff; r.saldo=Math.round(run*100)/100; if(r.eff>0) totIn+=r.eff; else totOut-=r.eff;
+    r.paid = r.group ? faturaInfo(r.card,m).paga : (r.kind==='saida' ? paidState(r.i,m) : true); }
+  const q=norm(st.exQ||'');
+  const match=r=>{
+    if(st.exF==='entradas'&&!(r.eff>0)) return false;
+    if(st.exF==='saidas'&&!(r.eff<0&&r.kind!=='transf')) return false;
+    if(st.exF==='transf'&&r.kind!=='transf') return false;
+    if(st.exF==='apagar'&&!(r.kind==='saida'&&!r.paid)) return false;
+    if(st.exF==='pagas'&&!(r.kind==='saida'&&r.paid)) return false;
+    if(!q) return true;
+    const txt=r.group? (r.name+' '+r.items.map(x=>x.name+' '+(x.cat||'')).join(' ')) : (r.i.name+' '+(r.i.cat||'')+' '+(r.i.desc||''));
+    return norm(txt).includes(q);
+  };
+  const dd=d=>`${String(d).padStart(2,'0')}<small>${ymShort(m)}</small>`;
+  const valHTML=r=>{
+    const c=r.eff>0?'var(--in)':r.eff<0?(r.kind==='invest'?'var(--inv)':'var(--out)'):'var(--muted)';
+    const v=r.eff===0&&r.kind==='transf'?'⇄ '+brl(r.i.amount):(r.eff>0?'+':'−')+brl(Math.abs(r.eff));
+    const tail = temSaldo ? `<small class="num">saldo ${brl(r.saldo)}</small>` : (r.kind==='saida' ? `<small style="color:${r.paid?'var(--in)':'var(--out)'}">${r.paid?'✓ pago':'a pagar'}</small>` : '');
+    return `<div class="exval"><b class="num" style="color:${c}">${v}</b>${tail}</div>`;
+  };
+  const subOf=r=>{
+    const i=r.i, parts=[];
+    if(i.type==='transferencia') parts.push('⇄ '+i.acc.toUpperCase()+' → '+(i.para||other(i.acc)).toUpperCase());
+    else parts.push(TYPE1[i.type]);
+    parts.push(i.cat||'Outros');
+    if(i.n>1) parts.push('parcela '+String(i.idx).padStart(2,'0')+'/'+String(i.n).padStart(2,'0'));
+    if(i.rec) parts.push('todo mês');
+    if(st.acc==='all') parts.push(i.acc.toUpperCase());
+    return parts.join(', ');
+  };
+  const shown=rows.filter(match);
+  const list=shown.map(r=> r.group
+    ? `<li><details><summary class="exrow"><div class="exday">${dd(r.day)}</div><div><div class="exname">💳 ${esc(r.name)}</div><div class="exsub">${r.items.length} compra${r.items.length>1?'s':''} nesta fatura. Toque para ver.</div></div>${valHTML(r)}</summary>${txList(r.items)}</details></li>`
+    : `<li><button class="exrow" data-ex="${r.i.id}" data-acc="${r.i.acc}"><div class="exday">${dd(r.day)}</div><div><div class="exname">${esc(r.i.name)}</div><div class="exsub">${esc(subOf(r))}</div></div>${valHTML(r)}</button></li>`).join('');
+  const chip=(k,l)=>`<button class="chip ${st.exF===k?'on':''}" data-exf="${k}">${l}</button>`;
+  const cs=contasStatus(m);
+  view.innerHTML=`<div class="ex-tools">${chip('todos','Todos')}${temSaldo?chip('entradas','Entradas')+chip('saidas','Saídas')+chip('transf','Transferências'):chip('apagar','A pagar')+chip('pagas','Pagas')}
+    <input id="exQ" type="search" placeholder="Buscar lançamento" value="${esc(st.exQ||'')}" aria-label="Buscar lançamento"></div>
+    <ul class="ex">
+      ${temSaldo?`<li><div class="exrow static"><div class="exday">${'01'}<small>${ymShort(m)}</small></div><div><div class="exname">${temSaldo?'Saldo do mês anterior'+(st.acc==='all'?' (PJ)':''):'Início do mês'}</div><div class="exsub">${temSaldo?(saldoAccs().every(a=>contas[a])?'Saldo informado/calculado':'Calculado a partir dos lançamentos. Toque em Informar saldo na Visão geral para ajustar ao banco.'):'A PF começa cada mês do zero'}</div></div><div class="exval"><b class="num">${brl(ini)}</b></div></div></li>`:''}
+      ${list||'<li><div class="empty">Nenhum lançamento encontrado.</div></li>'}
+    </ul>
+    ${temSaldo?`<div class="ex-foot">
+      <div>Saldo anterior<b class="num">${brl(ini)}</b></div>
+      <div>Entradas<b class="num c-in">+${brl(totIn)}</b></div>
+      <div>Saídas<b class="num c-out">−${brl(totOut)}</b></div>
+      <div>Saldo em conta<b class="num">${brl(ini+totIn-totOut)}</b></div>
+    </div>`:`<div class="ex-foot">
+      <div>Contas do mês<b class="num">${brl(cs.total)}</b></div>
+      <div>Já pago<b class="num c-in">${brl(cs.pago)}</b></div>
+      <div>Falta pagar<b class="num c-out">${brl(cs.falta)}</b></div>
+      <div>Investido<b class="num c-inv">${brl(totOut-cs.total>0?totOut-cs.total:0)}</b></div>
+    </div>`}
+    <p class="sub" style="margin-top:10px">Compras no cartão aparecem juntas no dia do vencimento da fatura, como no extrato do banco.${st.acc==='all'?' Na visão Tudo, as transferências entre PF e PJ não mudam o saldo.':''}${!temSaldo?' Contas fixas ficam como pagas quando você marca "Pago" nelas, e as do cartão quando a fatura é marcada como paga.':''}</p>`;
+  view.querySelectorAll('[data-exf]').forEach(b=>b.onclick=()=>{st.exF=b.dataset.exf;render();});
+  const qi=document.getElementById('exQ');
+  qi.oninput=()=>{ st.exQ=qi.value; clearTimeout(renderExtrato._t); renderExtrato._t=setTimeout(()=>{ const pos=qi.selectionStart; render(); const n=document.getElementById('exQ'); n.focus(); try{n.setSelectionRange(pos,pos);}catch(e){} },250); };
+  view.querySelectorAll('[data-ex]').forEach(b=>b.onclick=()=>openForm(b.dataset.acc,b.dataset.ex));
+  bindList(view);
 }
 function showFilter(saidas){
   const el=document.getElementById('filt'); if(!el) return;
@@ -1456,7 +1584,7 @@ function botReply(text){
   if(/^(oi|ola|olá|bom dia|boa tarde|boa noite|ajuda|help|\?)/.test(low)) return {text:'Oi! Me manda um gasto do jeito que você falaria. Exemplos:\n\nmercado 230,50\nifood 48 pj\ntv 2400 em 10x\ninternet 120 fixa\nrecebi 5000 cliente pj\ntesouro 500\nifood 60 cartão\nrecebi 4400 youtube pj\ntransferi salário 1442,69 pra pf todo mês\neuropa 1000 (guarda na sua meta)\n\nTambém entendo "resumo" e "desfazer".'};
   if(/^resumo|^saldo/.test(low)){
     const t=totals(ymNow()); const lbl=st.acc==='all'?'PF + PJ':st.acc.toUpperCase();
-    if(!saldoAccs().length) return {text:`Resumo de ${ymLabel(ymNow())} (${lbl}):\n\nEntrou ${brl(t.in)}\nSaiu ${brl(t.out)}\nInvestido ${brl(t.inv)}\nSobrou no mês ${brl(t.in-t.out-t.inv)}`};
+    if(!saldoAccs().length){ const cs=contasStatus(ymNow()); return {text:`Contas de ${ymLabel(ymNow())} (${lbl}):\n\nTotal ${brl(cs.total)}\nJá pago ${brl(cs.pago)}\nFalta pagar ${brl(cs.falta)}`}; }
     const ant=saldoAnt(ymNow());
     return {text:`Resumo de ${ymLabel(ymNow())} (${lbl}):\n\nSaldo do mês anterior${st.acc==='all'?' (PJ)':''} ${brl(ant)}\nEntrou ${brl(t.in)}\nSaiu ${brl(t.out)}\nInvestido ${brl(t.inv)}\n\nSaldo em conta ${brl(ant+t.in-t.out-t.inv)}`};
   }
