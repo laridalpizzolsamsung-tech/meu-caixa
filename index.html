@@ -241,6 +241,15 @@ body[data-acc="all"] .btn{color:var(--bg)}
 .gear{border:1px solid var(--line);background:var(--surface);width:36px;height:36px;border-radius:10px;font-size:17px}
 .menu-list{display:grid;gap:8px;padding:0 20px 20px}
 .menu-list .btn{text-align:left}
+.pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12.5px;font-weight:700}
+.pill.open{background:var(--acc-soft);color:var(--ink)}
+.pill.closed{background:color-mix(in srgb,var(--inv) 22%,transparent);color:var(--ink)}
+.pill.late{background:color-mix(in srgb,var(--out) 22%,transparent);color:var(--out)}
+.pill.paid{background:color-mix(in srgb,var(--in) 22%,transparent);color:var(--in)}
+.fatura-big{font-size:40px;font-weight:800;line-height:1.05;color:var(--out)}
+.fatura-dates{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0;font-size:13px;color:var(--muted)}
+.fatura-dates b{display:block;color:var(--ink);font-size:16px}
+.cardchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:18px}
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;z-index:50;opacity:0;transition:opacity .2s;pointer-events:none}
 .toast.show{opacity:1}
 .sync{font-size:12px;color:var(--muted)}
@@ -269,6 +278,7 @@ body[data-acc="all"] .btn{color:var(--bg)}
       <button role="tab" data-t="fixa">Contas fixas</button>
       <button role="tab" data-t="variavel">Variáveis</button>
       <button role="tab" data-t="parcelas">Parcelados</button>
+      <button role="tab" data-t="cartao">Cartão</button>
       <button role="tab" data-t="investimento">Investimentos</button>
       <button role="tab" data-t="recebimento">Recebimentos</button>
       <button role="tab" data-t="whats">WhatsApp</button>
@@ -300,6 +310,8 @@ body[data-acc="all"] .btn{color:var(--bg)}
     </div>
     <label class="fl"><span>Categoria</span><input name="cat" list="cats" placeholder="Ex.: Alimentação"></label>
     <datalist id="cats"></datalist>
+    <label class="fl" id="payWrap" hidden><span>Forma de pagamento</span><select name="pay"></select></label>
+    <p class="hint" id="payHint" hidden></p>
     <label class="fl" id="metaWrap" hidden><span>Guardar para a meta</span><select name="meta"></select></label>
     <div id="eurTx" hidden>
       <label class="check"><input type="checkbox" name="isEur"> Comprei euros</label>
@@ -347,6 +359,26 @@ body[data-acc="all"] .btn{color:var(--bg)}
       <button type="button" class="btn ghost" id="mDel" hidden>Excluir meta</button>
       <span></span>
       <button type="submit" class="btn gold">Salvar meta</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="cdlg">
+  <div class="mhead"><h2 id="cTitle">Novo cartão</h2><button class="x" id="cClose" aria-label="Fechar">×</button></div>
+  <form class="f" id="cfrm">
+    <div class="seg two" role="radiogroup" aria-label="Conta">
+      <label><input type="radio" name="acc" value="pf" checked><span>Conta PF</span></label>
+      <label><input type="radio" name="acc" value="pj"><span>Conta PJ</span></label>
+    </div>
+    <label class="fl"><span>Nome do cartão</span><input name="nome" required placeholder="Ex.: Nubank, Itaú Visa"></label>
+    <div class="row2">
+      <label class="fl"><span>Dia que a fatura fecha</span><input name="fecha" type="number" inputmode="numeric" min="1" max="31" required></label>
+      <label class="fl"><span>Dia do vencimento</span><input name="vence" type="number" inputmode="numeric" min="1" max="31" required></label>
+    </div>
+    <p class="hint" id="cHint"></p>
+    <div class="actions">
+      <button type="button" class="btn ghost" id="cDel" hidden>Excluir cartão</button>
+      <span></span>
+      <button type="submit" class="btn">Salvar cartão</button>
     </div>
   </form>
 </dialog>
@@ -398,6 +430,7 @@ const PAL = ['#0F7B6C','#3D4FB8','#E07A3F','#C8463D','#B7791F','#7A4FB0','#2E93B
 let data = {pf:[], pj:[]};
 let chat = [];
 let metas = {pf:[], pj:[]};
+let cartoes = {pf:[], pj:[]};
 let editingMeta = null;
 let st = {acc:'pf', tab:'geral', m: ymNow(), catFilter:null};
 let editing = null;
@@ -442,8 +475,16 @@ function ask({title,msg='',label='',value=null,ok='OK',danger=false}){
 function cssVar(n){return getComputedStyle(document.body).getPropertyValue(n).trim();}
 
 /* occurrence of a transaction in month m: returns {amount, idx, n} or null */
-function occ(t,m){
-  const s=ymOf(t.date);
+function cardOf(t,acc){ return t.cartao ? (cartoes[acc]||[]).find(c=>c.id===t.cartao) : null; }
+/* mês (YM) em que vence a fatura que recebe uma compra feita em dateStr */
+function faturaYM(dateStr,c){
+  const ym=ymOf(dateStr), d=parseInt(dateStr.slice(8,10))||1;
+  const closeYM = d>=c.fecha ? ym+1 : ym;          // compra no dia do fechamento ou depois vai para a próxima fatura
+  return c.vence>c.fecha ? closeYM : closeYM+1;
+}
+function startYM(t,acc){ const c=cardOf(t,acc); return c?faturaYM(t.date,c):ymOf(t.date); }
+function occ(t,m,acc){
+  const s=startYM(t,acc);
   if(t.n>1){ if(m<s||m>s+t.n-1) return null; return {amount:Math.round(t.valor/t.n*100)/100, idx:m-s+1, n:t.n}; }
   if(t.rec){ if(m<s) return null; if(t.fim && m>ymOf(t.fim)) return null; return {amount:t.valor}; }
   return m===s?{amount:t.valor}:null;
@@ -453,7 +494,7 @@ function monthItems(m, type){
   const out=[];
   for(const a of accs()) for(const t of data[a]){
     if(type && t.type!==type) continue;
-    const o=occ(t,m); if(o) out.push({...t, acc:a, ...o});
+    const o=occ(t,m,a); if(o) out.push({...t, acc:a, ...o});
   }
   return out.sort((x,y)=> (y.date>x.date?1:-1));
 }
@@ -470,7 +511,7 @@ function totals(m){
 /* ---------- storage (Firebase) ---------- */
 const FAM=(window.APP_CONFIG&&window.APP_CONFIG.familia)||'familia';
 let FBdb=null, me=null, unsubs=[], pendingRender=false, chatSynced='', chatT=null;
-const synced={lanc:new Map(), metas:new Map()};
+const synced={lanc:new Map(), metas:new Map(), cartoes:new Map()};
 function stable(v){
   if(Array.isArray(v)) return '['+v.map(stable).join(',')+']';
   if(v&&typeof v==='object') return '{'+Object.keys(v).filter(k=>v[k]!==undefined).sort().map(k=>JSON.stringify(k)+':'+stable(v[k])).join(',')+'}';
@@ -486,6 +527,9 @@ function persist(){
   const curM=new Map(); for(const a of ['pf','pj']) for(const m of metas[a]) curM.set(a+'_'+m.id,{...m,acc:a});
   for(const [k,m] of curM){ const s=stable(m); if(synced.metas.get(k)!==s){ ops.push(['set',FB.doc(col('metas'),k),m]); synced.metas.set(k,s);} }
   for(const k of [...synced.metas.keys()]) if(!curM.has(k)){ ops.push(['del',FB.doc(col('metas'),k)]); synced.metas.delete(k); }
+  const curC=new Map(); for(const a of ['pf','pj']) for(const c of cartoes[a]) curC.set(a+'_'+c.id,{...c,acc:a});
+  for(const [k,c] of curC){ const s=stable(c); if(synced.cartoes.get(k)!==s){ ops.push(['set',FB.doc(col('cartoes'),k),c]); synced.cartoes.set(k,s);} }
+  for(const k of [...synced.cartoes.keys()]) if(!curC.has(k)){ ops.push(['del',FB.doc(col('cartoes'),k)]); synced.cartoes.delete(k); }
   for(let i=0;i<ops.length;i+=400){
     const b=FB.writeBatch(FBdb);
     for(const op of ops.slice(i,i+400)){ if(op[0]==='set') b.set(op[1],op[2]); else b.delete(op[1]); }
@@ -518,6 +562,11 @@ function startData(user){
     snap.forEach(d=>{ const o=d.data(); const a=o.acc==='pj'?'pj':'pf'; const t={...o}; delete t.acc; if(!t.id) t.id=d.id.replace(/^(pf|pj)_/,''); nd[a].push(t); synced.lanc.set(a+'_'+t.id,stable({...t,acc:a})); });
     data=nd; gotL=true; syncStatus(snap); ready(); scheduleRender();
   },e=>{ gateError(fbErr(e)); }));
+  unsubs.push(FB.onSnapshot(col('cartoes'),snap=>{
+    const nc={pf:[],pj:[]}; synced.cartoes=new Map();
+    snap.forEach(d=>{ const o=d.data(); const a=o.acc==='pj'?'pj':'pf'; const c={...o}; delete c.acc; nc[a].push(c); synced.cartoes.set(a+'_'+c.id,stable({...c,acc:a})); });
+    cartoes=nc; scheduleRender();
+  },e=>{ gateError(fbErr(e)); }));
   unsubs.push(FB.onSnapshot(col('metas'),snap=>{
     const nm={pf:[],pj:[]}; synced.metas=new Map();
     snap.forEach(d=>{ const o=d.data(); const a=o.acc==='pj'?'pj':'pf'; const m={...o}; delete m.acc; nm[a].push(m); synced.metas.set(a+'_'+m.id,stable({...m,acc:a})); });
@@ -533,7 +582,7 @@ function gateError(msg){
 }
 function showLogin(){
   me=null; unsubs.forEach(u=>u()); unsubs=[];
-  data={pf:[],pj:[]}; metas={pf:[],pj:[]}; chat=[]; synced.lanc=new Map(); synced.metas=new Map();
+  data={pf:[],pj:[]}; metas={pf:[],pj:[]}; cartoes={pf:[],pj:[]}; chat=[]; synced.lanc=new Map(); synced.metas=new Map(); synced.cartoes=new Map();
   const g=document.getElementById('gate'); g.hidden=false;
   const o=document.getElementById('gateOut'); if(o) o.remove();
   document.getElementById('gateMsg').textContent='Entre com seu e-mail e senha.';
@@ -568,7 +617,7 @@ document.getElementById('gear').onclick=()=>{ document.getElementById('menuUser'
 document.getElementById('menuClose').onclick=()=>menuDlg.close();
 document.getElementById('btnLogout').onclick=()=>{ menuDlg.close(); if(window.FB&&FB.signOut) FB.signOut(FB.auth); };
 document.getElementById('btnExport').onclick=()=>{
-  const blob=new Blob([JSON.stringify({app:'meu-caixa',version:1,exportado:new Date().toISOString(),data,metas,chat},null,2)],{type:'application/json'});
+  const blob=new Blob([JSON.stringify({app:'meu-caixa',version:1,exportado:new Date().toISOString(),data,metas,cartoes,chat},null,2)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='meu-caixa-backup-'+today()+'.json'; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),5000);
 };
@@ -583,13 +632,14 @@ document.getElementById('fileImport').onchange=async e=>{
     for(const a of ['pf','pj']){
       for(const t of (src[a]||[])) if(t&&t.id&&!data[a].some(x=>x.id===t.id)){ data[a].push(t); nL++; }
       for(const m of (sm[a]||[])) if(m&&m.id&&!metas[a].some(x=>x.id===m.id)){ metas[a].push(m); nM++; }
+      for(const c of ((o.cartoes||{})[a]||[])) if(c&&c.id&&!cartoes[a].some(x=>x.id===c.id)) cartoes[a].push(c);
     }
     if(Array.isArray(o.chat)&&!chat.length) chat=o.chat;
     persist(); menuDlg.close(); render();
     toast(nL||nM?`Importado: ${nL} lançamento(s) e ${nM} meta(s)`:'Nada novo para importar');
   }catch(err){ toast('Esse arquivo não é um backup válido'); }
 };
-['dlg','mdlg','askDlg','menuDlg'].forEach(id=>document.getElementById(id).addEventListener('close',()=>{ setTimeout(()=>{ if(pendingRender&&!document.querySelector('dialog[open]')){ pendingRender=false; render(); } },0); }));
+['dlg','mdlg','askDlg','menuDlg','cdlg'].forEach(id=>document.getElementById(id).addEventListener('close',()=>{ setTimeout(()=>{ if(pendingRender&&!document.querySelector('dialog[open]')){ pendingRender=false; render(); } },0); }));
 
 /* ---------- charts ---------- */
 function killCharts(){while(charts.length) charts.pop().destroy();}
@@ -629,6 +679,7 @@ function render(){
   document.getElementById('fab').hidden = st.tab==='whats';
   if(st.tab==='geral') renderGeral();
   else if(st.tab==='parcelas') renderParcelas();
+  else if(st.tab==='cartao') renderCartao();
   else if(st.tab==='whats') renderWhats();
   else renderType(st.tab);
 }
@@ -911,13 +962,14 @@ function txList(items){
     const sign=i.type==='recebimento'?'+':i.type==='investimento'?'':'−';
     const mt=i.meta&&metas[i.acc].find(x=>x.id===i.meta);
     const accTag=(st.acc==='all'?`<span class="tag ${i.acc}">${i.acc.toUpperCase()}</span>`:'')+(mt?`<span class="tag meta-t">🎯 ${mt.name===i.name?'Meta':esc(mt.name)}</span>`:'');
-    const meta=[i.cat||'Outros', ...(i.eur>0?[eur(i.eur)+' a '+brl(i.valor/i.eur)]:[]), i.n>1?brl(i.valor)+' no total':(i.rec?'Todo mês':new Date(i.date+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'}))].join(', ');
+    const cc=cardOf(i,i.acc);
+    const meta=[i.cat||'Outros', ...(cc?['💳 '+cc.nome]:[]), ...(i.eur>0?[eur(i.eur)+' a '+brl(i.valor/i.eur)]:[]), i.n>1?brl(i.valor)+' no total':(i.rec?'Todo mês':new Date(i.date+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'}))].join(', ');
     return `<li data-id="${i.id}" data-acc="${i.acc}">
       <span class="dot" style="background:${col}"></span>
       <div><div class="t">${esc(i.name)}${accTag}</div><div class="m">${esc(meta)}</div>
         ${i.desc?`<div class="note">${esc(i.desc)}</div>`:''}
         ${i.n>1?progHTML(i.idx,i.n,true):''}
-        ${i.type==='fixa'?`<label class="paid" data-stop><input type="checkbox" data-pay ${ (i.pagos||[]).includes(mk)?'checked':''}> Pago</label>`:''}
+        ${i.type==='fixa'&&!cc?`<label class="paid" data-stop><input type="checkbox" data-pay ${ (i.pagos||[]).includes(mk)?'checked':''}> Pago</label>`:''}
       </div>
       <div class="v num" style="color:${col}">${sign}${brl(i.amount)}</div></li>`;}).join('')}</ul>`;
 }
@@ -934,10 +986,115 @@ function bindList(root){
   root.querySelectorAll('[data-new]').forEach(b=>b.onclick=()=>openForm());
 }
 
+function faturaInfo(c,m){
+  const closeYM = c.vence>c.fecha ? m : m-1;
+  const mk=(ym,d)=>{ const y=Math.floor(ym/12), mo=ym%12; const last=new Date(y,mo+1,0).getDate(); return new Date(y,mo,Math.min(d,last)); };
+  const close=mk(closeYM,c.fecha), due=mk(m,c.vence), now=new Date(); now.setHours(0,0,0,0);
+  const paga=(c.pagas||[]).includes(ymKey(m));
+  let status, cls;
+  if(paga){status='Paga';cls='paid';}
+  else if(now<close){status='Aberta';cls='open';}
+  else if(now<=due){status='Fechada, aguardando pagamento';cls='closed';}
+  else {status='Vencida';cls='late';}
+  return {close,due,paga,status,cls};
+}
+function faturaItems(c,acc,m){ return data[acc].filter(t=>t.cartao===c.id).map(t=>{const o=occ(t,m,acc);return o?{...t,acc,...o}:null;}).filter(Boolean).sort((a,b)=>b.date>a.date?1:-1); }
+function renderCartao(){
+  const cards=[]; for(const a of accs()) for(const c of cartoes[a]) cards.push({...c,acc:a});
+  if(!cards.length){
+    view.innerHTML=`<div class="panel" style="margin-top:18px;text-align:center;padding:32px 20px">
+      <h3>Cadastre seu cartão de crédito</h3>
+      <p class="sub" style="max-width:420px;margin:8px auto 16px">Informe o dia em que a fatura fecha e o dia do vencimento. As compras no cartão passam a entrar automaticamente na fatura certa.</p>
+      <button class="btn" id="addCard">+ Cadastrar cartão</button></div>`;
+    document.getElementById('addCard').onclick=()=>openCard();
+    return;
+  }
+  let c=cards.find(x=>x.id===st.card)||cards[0]; st.card=c.id;
+  const m=st.m, fi=faturaInfo(c,m), items=faturaItems(c,c.acc,m);
+  const total=items.reduce((a,b)=>a+b.amount,0);
+  const dfmt=d=>d.toLocaleDateString('pt-BR',{day:'2-digit',month:'short'}).replace(/\.$/,'');
+  const chips=`<div class="cardchips">${cards.map(x=>`<button class="chip ${x.id===c.id?'on':''}" data-card="${x.id}">💳 ${esc(x.nome)}${st.acc==='all'?' ('+x.acc.toUpperCase()+')':''}</button>`).join('')}<button class="chip" id="newCard">+ Novo cartão</button></div>`;
+  view.innerHTML=chips+`<div class="grid2" style="margin-top:12px">
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div><h3>Fatura de ${ymLabel(m).replace(' de ',' ')}</h3><p class="sub">${esc(c.nome)}</p></div><span class="pill ${fi.cls}">${fi.status}</span></div>
+      <div class="fatura-big num">${brl(total)}</div>
+      <div class="fatura-dates"><div>Fecha em<b>${dfmt(fi.close)}</b></div><div>Vence em<b>${dfmt(fi.due)}</b></div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ${fi.paga?'sec':''}" id="payFat">${fi.paga?'Desmarcar pagamento':'Marcar como paga'}</button>
+        <button class="btn sec" id="editCard">Editar cartão</button>
+      </div>
+    </div>
+    <div class="panel"><h3>Por categoria</h3><p class="sub">O que tem nesta fatura</p><div class="chartbox"><canvas id="pc"></canvas></div></div>
+  </div>
+  <div class="panel" style="margin-top:16px"><h3>Próximas faturas</h3><p class="sub">Inclui as parcelas que já estão programadas</p><div class="chartbox tall"><canvas id="bc"></canvas></div></div>
+  <div class="listhead"><h3>Compras nesta fatura</h3><button class="chip on" id="addOnCard">+ Lançar no cartão</button></div>
+  ${items.length?txList(items):`<div class="empty">Nenhuma compra nesta fatura.</div>`}`;
+  if(items.length){const g=group(items,i=>i.cat);pie(document.getElementById('pc'),g.labels,g.values,null);}
+  else document.getElementById('pc').parentElement.innerHTML='<div class="empty">Sem compras ainda.</div>';
+  const L=[],V=[]; for(let k=0;k<6;k++){ const mm=m+k; L.push(ymShort(mm)); V.push(Math.round(faturaItems(c,c.acc,mm).reduce((a,b)=>a+b.amount,0)*100)/100); }
+  bars(document.getElementById('bc'),L,[{label:'Fatura',data:V,backgroundColor:cssVar('--out')}]);
+  view.querySelectorAll('[data-card]').forEach(b=>b.onclick=()=>{st.card=b.dataset.card;render();});
+  document.getElementById('newCard').onclick=()=>openCard();
+  document.getElementById('editCard').onclick=()=>openCard(c.acc,c.id);
+  document.getElementById('addOnCard').onclick=()=>document.getElementById('fab').click();
+  document.getElementById('payFat').onclick=()=>{
+    const cc=cartoes[c.acc].find(x=>x.id===c.id); if(!cc) return;
+    const k=ymKey(m); cc.pagas=(cc.pagas||[]).filter(x=>x!==k); if(!fi.paga) cc.pagas.push(k);
+    persist(); render(); toast(fi.paga?'Pagamento desmarcado':'Fatura marcada como paga');
+  };
+  bindList(view);
+}
+/* diálogo do cartão */
+const cdlg=document.getElementById('cdlg'), cfrm=document.getElementById('cfrm');
+let editingCard=null;
+function syncCard(){
+  const f=parseInt(cfrm.fecha.value), v=parseInt(cfrm.vence.value), h=document.getElementById('cHint');
+  if(f>=1&&f<=31&&v>=1&&v<=31) h.textContent=`Compras até o dia ${f-1||'anterior'} entram na fatura que vence dia ${v}${v>f?' do mesmo mês':' do mês seguinte'}. A partir do dia ${f}, vão para a fatura seguinte.`;
+  else h.textContent='';
+}
+cfrm.addEventListener('input',syncCard);
+function openCard(acc,id){
+  cfrm.reset(); editingCard=null;
+  cfrm.acc.value=acc||(st.acc==='all'?'pf':st.acc);
+  cfrm.fecha.value=19; cfrm.vence.value=25;
+  document.getElementById('cTitle').textContent='Novo cartão';
+  document.getElementById('cDel').hidden=true;
+  if(id){
+    const c=cartoes[acc].find(x=>x.id===id); if(!c) return;
+    editingCard={acc,id};
+    document.getElementById('cTitle').textContent='Editar cartão';
+    document.getElementById('cDel').hidden=false;
+    cfrm.nome.value=c.nome; cfrm.fecha.value=c.fecha; cfrm.vence.value=c.vence;
+  }
+  syncCard(); cdlg.showModal(); setTimeout(()=>cfrm.nome.focus(),50);
+}
+cfrm.onsubmit=e=>{
+  e.preventDefault();
+  const f=parseInt(cfrm.fecha.value), v=parseInt(cfrm.vence.value);
+  if(!(f>=1&&f<=31&&v>=1&&v<=31)){toast('Use dias entre 1 e 31');return;}
+  const acc=cfrm.acc.value;
+  let c={id:editingCard?editingCard.id:uidGen(), nome:cfrm.nome.value.trim()||'Cartão', fecha:f, vence:v, pagas:[]};
+  if(editingCard){
+    const old=cartoes[editingCard.acc].find(x=>x.id===editingCard.id); if(old) c.pagas=old.pagas||[];
+    cartoes[editingCard.acc]=cartoes[editingCard.acc].filter(x=>x.id!==editingCard.id);
+    if(editingCard.acc!==acc){ data[editingCard.acc].filter(t=>t.cartao===c.id).forEach(t=>{ data[editingCard.acc]=data[editingCard.acc].filter(x=>x.id!==t.id); data[acc].push(t); }); }
+  }
+  cartoes[acc].push(c); st.card=c.id; persist(); cdlg.close(); render();
+  toast(editingCard?'Cartão atualizado':'Cartão cadastrado');
+};
+document.getElementById('cDel').onclick=async()=>{
+  if(!editingCard) return;
+  if(!await ask({title:'Excluir este cartão?',msg:'As compras feitas nele continuam no app, mas passam a contar na data da compra, fora de fatura.',ok:'Excluir cartão',danger:true})) return;
+  data[editingCard.acc].forEach(t=>{ if(t.cartao===editingCard.id) delete t.cartao; });
+  cartoes[editingCard.acc]=cartoes[editingCard.acc].filter(x=>x.id!==editingCard.id);
+  persist(); cdlg.close(); render(); toast('Cartão excluído');
+};
+document.getElementById('cClose').onclick=()=>cdlg.close();
+
 function renderParcelas(){
   const all=[];
   for(const a of accs()) for(const t of data[a]) if(t.n>1) all.push({...t,acc:a});
-  const rows=all.map(t=>{const s=ymOf(t.date);const idx=Math.max(0,Math.min(t.n,st.m-s+1));return {...t,idx,parc:Math.round(t.valor/t.n*100)/100,start:s};});
+  const rows=all.map(t=>{const s=startYM(t,t.acc);const idx=Math.max(0,Math.min(t.n,st.m-s+1));return {...t,idx,parc:Math.round(t.valor/t.n*100)/100,start:s};});
   const active=rows.filter(r=>r.idx>=1&&r.idx<=r.n && st.m<=r.start+r.n-1);
   const future=rows.filter(r=>r.idx===0);
   const ended=rows.filter(r=>st.m>r.start+r.n-1);
@@ -987,6 +1144,21 @@ function syncForm(){
       : (v>0?n+'x de '+brl(v/n)+'. ':'')+'Parcela '+String(at).padStart(2,'0')+'/'+String(n).padStart(2,'0')+' na data escolhida; a 1ª foi em '+ymLabel(m0)+' e a última será em '+ymLabel(m0+n-1)+'.';
   } else hint.hidden=true;
   document.getElementById('cats').innerHTML=CATS[type].map(c=>`<option value="${esc(c)}">`).join('');
+  const pw=document.getElementById('payWrap'), ph=document.getElementById('payHint'), cs=cartoes[frm.acc.value]||[];
+  pw.hidden = !(type==='fixa'||type==='variavel') || !cs.length;
+  const curPay=frm.pay.value;
+  frm.pay.innerHTML='<option value="">Dinheiro, Pix ou débito</option>'+cs.map(c=>`<option value="${c.id}">💳 ${esc(c.nome)} (fecha ${c.fecha}, vence ${c.vence})</option>`).join('');
+  if(cs.some(c=>c.id===curPay)) frm.pay.value=curPay;
+  if(pw.hidden) frm.pay.value='';
+  const selC=cs.find(c=>c.id===frm.pay.value);
+  if(selC && frm.date.value){
+    const fy=faturaYM(frm.date.value,selC), nn=p?(parseInt(frm.nparc.value)||1):1, at=p?Math.max(1,parseInt(frm.patual.value)||1):1;
+    const first=fy-(at-1);
+    ph.hidden=false;
+    ph.textContent = nn>1 ? `Parcela ${String(at).padStart(2,'0')}/${String(nn).padStart(2,'0')} cai na fatura que vence em ${selC.vence} de ${ymLabel(fy).toLowerCase()}. A última vai na fatura de ${ymLabel(first+nn-1).toLowerCase()}.`
+      : `Entra na fatura que vence em ${selC.vence} de ${ymLabel(fy).toLowerCase()}.`;
+    if(p) document.getElementById('parcHint').hidden=true;
+  } else ph.hidden=true;
   const mw=document.getElementById('metaWrap'), ms=metas[frm.acc.value]||[];
   mw.hidden = type!=='investimento' || !ms.length;
   const cur=frm.meta.value;
@@ -1012,16 +1184,18 @@ function openForm(acc,id){
   frm.date.value = st.m===ymNow()?today():ymKey(st.m)+'-01';
   frm.rec.checked = defType==='fixa';
   if(st.tab==='parcelas'){frm.type.value='variavel';frm.isParc.checked=true;frm.rec.checked=false;}
+  let payPre='';
+  if(st.tab==='cartao' && !id){ const all=[...cartoes.pf.map(c=>({...c,acc:'pf'})),...cartoes.pj.map(c=>({...c,acc:'pj'}))]; const c=all.find(x=>x.id===st.card); if(c){ frm.acc.value=c.acc; frm.type.value='variavel'; frm.rec.checked=false; payPre=c.id; } }
   if(id){
     const t=data[acc].find(x=>x.id===id); if(!t) return;
     editing={acc,id};
     document.getElementById('dlgTitle').textContent='Editar lançamento';
     document.getElementById('btnDel').hidden=false;
     frm.type.value=t.type; frm.name.value=t.name; frm.valor.value=String(t.valor).replace('.',',');
-    frm.date.value=t.date; frm.cat.value=t.cat||''; frm.desc.value=t.desc||''; frm._meta=t.meta||''; frm._eur=t.eur||0;
+    frm.date.value=t.date; frm.cat.value=t.cat||''; frm.desc.value=t.desc||''; frm._meta=t.meta||''; frm._eur=t.eur||0; payPre=t.cartao||'';
     frm.isParc.checked=t.n>1; frm.nparc.value=t.n>1?t.n:''; frm.patual.value=1; frm.rec.checked=!!t.rec;
   }
-  syncForm(); if(id&&frm._meta){frm.meta.value=frm._meta; if(frm._eur>0){frm.isEur.checked=true; frm.eurq.value=String(frm._eur).replace('.',',');} syncForm();} frm._meta=''; frm._eur=0; dlg.showModal(); setTimeout(()=>frm.name.focus(),50);
+  syncForm(); if(payPre){ frm.pay.value=payPre; syncForm(); } if(id&&frm._meta){frm.meta.value=frm._meta; if(frm._eur>0){frm.isEur.checked=true; frm.eurq.value=String(frm._eur).replace('.',',');} syncForm();} frm._meta=''; frm._eur=0; dlg.showModal(); setTimeout(()=>frm.name.focus(),50);
 }
 frm.addEventListener('input',syncForm);
 frm.addEventListener('change',e=>{ if(e.target.name==='type'){frm.rec.checked=frm.type.value==='fixa';} syncForm(); });
@@ -1040,6 +1214,7 @@ frm.onsubmit=e=>{
   const t={id:editing?editing.id:uidGen(), type:frm.type.value, name:frm.name.value.trim()||'Sem nome', valor, date,
     cat:frm.cat.value.trim()||'Outros', desc:frm.desc.value.trim(), n, rec:!p&&frm.rec.checked};
   const acc=frm.acc.value;
+  if((t.type==='fixa'||t.type==='variavel') && frm.pay.value && cartoes[acc].some(c=>c.id===frm.pay.value)) t.cartao=frm.pay.value;
   if(t.type==='investimento'&&frm.meta.value&&metas[acc].some(m=>m.id===frm.meta.value)){
     t.meta=frm.meta.value;
     if(frm.isEur.checked){
@@ -1131,12 +1306,13 @@ function interpret(text){
     if(!metaHit && /\b(meta)\b/.test(low) && (metas[accR]||[]).length===1) metaHit=metas[accR][0];
   }
   if(metaHit){type='investimento';cat='Metas';}
+  const usaCartao=/\b(cartao|credito|no cartao|cc)\b/.test(low);
   if(forceType) type=forceType;
   if(!type) type='variavel';
   if(n>1 && (type==='recebimento'||type==='investimento')) n=1;
   // description: remove value, account, helper words
   let name=clean.replace(vm[0],' ')
-    .replace(/\b(pj|pf|reais|real|r\$|gastei|paguei|comprei|com|no|na|de|do|da|em|um|uma|fixa|variavel|variável|conta|ontem|hoje|dia\s*\d{1,2}|recebi|investi|registrar|registar|registra|anotar|anota|lancar|lançar|lanca|lança)\b/gi,' ')
+    .replace(/\b(pj|pf|reais|real|r\$|gastei|paguei|comprei|com|no|na|de|do|da|em|um|uma|fixa|variavel|variável|conta|ontem|hoje|dia\s*\d{1,2}|recebi|investi|registrar|registar|registra|anotar|anota|lancar|lançar|lanca|lança|cartao|cartão|credito|crédito|cc)\b/gi,' ')
     .replace(/[,;:]+/g,' ').replace(/\s+/g,' ').trim();
   if(!name) name=cat||TYPE1[type];
   name=name.replace(/\b(guardei|guardar|meta|juntei|separei|pra|para)\b/gi,' ').replace(/\s+/g,' ').trim()||name;
@@ -1145,12 +1321,13 @@ function interpret(text){
   if(name.length>48) name=name.slice(0,48);
   const tx={id:uidGen(),type,name,valor,date,cat:cat||CATS[type][CATS[type].length-1],desc:'Registrado pelo chat: "'+text.trim()+'"',n,rec:type==='fixa'&&n===1};
   if(metaHit) tx.meta=metaHit.id;
+  if(usaCartao && (type==='variavel'||type==='fixa')){ const c=(cartoes[accR]||[])[0]; if(c){ tx.cartao=c.id; } }
   return {acc:accR, t:tx, meta:metaHit};
 }
 function nowTime(){return new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
 function botReply(text){
   const low=norm(text.trim());
-  if(/^(oi|ola|olá|bom dia|boa tarde|boa noite|ajuda|help|\?)/.test(low)) return {text:'Oi! Me manda um gasto do jeito que você falaria. Exemplos:\n\nmercado 230,50\nifood 48 pj\ntv 2400 em 10x\ninternet 120 fixa\nrecebi 5000 cliente pj\ntesouro 500\neuropa 1000 (guarda na sua meta)\n\nTambém entendo "resumo" e "desfazer".'};
+  if(/^(oi|ola|olá|bom dia|boa tarde|boa noite|ajuda|help|\?)/.test(low)) return {text:'Oi! Me manda um gasto do jeito que você falaria. Exemplos:\n\nmercado 230,50\nifood 48 pj\ntv 2400 em 10x\ninternet 120 fixa\nrecebi 5000 cliente pj\ntesouro 500\nifood 60 cartão\neuropa 1000 (guarda na sua meta)\n\nTambém entendo "resumo" e "desfazer".'};
   if(/^resumo|^saldo/.test(low)){
     const t=totals(ymNow()); const lbl=st.acc==='all'?'PF + PJ':st.acc.toUpperCase();
     return {text:`Resumo de ${ymLabel(ymNow())} (${lbl}):\n\nEntrou ${brl(t.in)}\nSaiu ${brl(t.out)}\nInvestido ${brl(t.inv)}\nSobrou ${brl(t.in-t.out-t.inv)}`};
@@ -1169,7 +1346,8 @@ function botReply(text){
     const sv=metaSaved(r.acc,r.meta), f=Math.max(0,r.meta.alvo-sv);
     return {text:`🎯 Guardado ${brl(t.valor)} na meta "${r.meta.name}" (${r.acc.toUpperCase()})\n\nJá tem ${brl(sv)} de ${brl(r.meta.alvo)} (${Math.floor(Math.min(100,sv/r.meta.alvo*100))}%)\n${f>0?'Falta '+brl(f):'Meta batida! 🎉'}`, ref:{acc:r.acc,id:t.id}, refName:t.name};
   }
-  return {text:`✅ Registrado na conta ${r.acc.toUpperCase()}\n\n${t.name}\n${TYPE1[t.type]}, ${t.cat}\n${t.n>1?'':brl(t.valor)}${parc}${t.rec?'\nRepete todo mês':''}`.replace(/\n\n\n/g,'\n\n'), ref:{acc:r.acc,id:t.id}, refName:t.name};
+  const cc=cardOf(t,r.acc); const cardTxt=cc?`\n💳 ${cc.nome}, fatura que vence em ${cc.vence} de ${ymLabel(faturaYM(t.date,cc)).toLowerCase()}`:'';
+  return {text:`✅ Registrado na conta ${r.acc.toUpperCase()}\n\n${t.name}\n${TYPE1[t.type]}, ${t.cat}\n${t.n>1?'':brl(t.valor)}${parc}${t.rec?'\nRepete todo mês':''}${cardTxt}`.replace(/\n\n\n/g,'\n\n'), ref:{acc:r.acc,id:t.id}, refName:t.name};
 }
 function undo(m){
   data[m.ref.acc]=data[m.ref.acc].filter(x=>x.id!==m.ref.id); m.undone=true; persist();
