@@ -590,12 +590,14 @@ function contasStatus(m){
 const SALDO_ACCS=['pj'];   // contas que carregam o saldo de um mês para o outro
 function saldoAccs(){ return accs().filter(a=>SALDO_ACCS.includes(a)); }
 function saldoAnt(m){ return saldoAccs().reduce((s,a)=>s+saldoAnterior(m,a),0); }
+/* Totais que mexem no saldo. O saldo existe só na PJ: na visão Tudo contam só os lançamentos da PJ
+   (as contas da PF são pagas com o dinheiro que saiu da PJ por transferência). */
 function totals(m){
   const r={in:0,out:0,inv:0,tin:0,tout:0};
-  const single=st.acc!=='all';
-  if(single) for(const it of transfersIn(m,st.acc)){ r.tin+=it.amount; r.in+=it.amount; }
-  for(const it of monthItems(m)){
-    if(it.type==='transferencia'){ if(single){ r.tout+=it.amount; r.out+=it.amount; } }
+  const list = st.acc==='all' ? ['pj'] : [st.acc];
+  const its=[]; for(const a of list) for(const t of data[a]){ const o=occ(t,m,a); if(o) its.push({...t,acc:a,...o}); }
+  for(const it of its){
+    if(it.type==='transferencia'){ r.tout+=it.amount; r.out+=it.amount; }
     else if(it.type==='recebimento') r.in+=it.amount;
     else if(it.type==='investimento') r.inv+=it.amount;
     else r.out+=it.amount;
@@ -801,13 +803,14 @@ function strip(t){
   }
   const ant=saldoAnt(st.m), final=ant+t.in-t.out-t.inv;
   const missing=saldoAccs().filter(a=>!contas[a]);
+  const pfNote = st.acc==='all' ? (()=>{ const sv=st.acc; st.acc='pf'; const cs=contasStatus(st.m); st.acc=sv; return cs.total?`<div class="saldo-hint"><span>Contas da PF em ${ymLabel(st.m).toLowerCase()}: ${brl(cs.total)}, já pago ${brl(cs.pago)}, falta pagar <b style="color:var(--out)">${brl(cs.falta)}</b>. Elas são pagas com os repasses que saem da PJ.</span></div>`:''; })() : '';
   return `<section class="strip five">
     <button class="cell ant" id="editSaldo" aria-label="Ajustar saldo"><small>Saldo do mês anterior${st.acc==='all'?' (PJ)':''}</small><b class="num" style="color:${ant<0?'var(--out)':'var(--ink)'}">${brl(ant)}</b></button>
     <div><small>Entrou</small><b class="num c-in">+${brl(t.in)}</b>${t.tin?`<span class="sub2">inclui ${brl(t.tin)} vindo da ${other(st.acc).toUpperCase()}</span>`:''}</div>
-    <div><small>Saiu</small><b class="num c-out">−${brl(t.out)}</b>${t.tout?`<span class="sub2">inclui ${brl(t.tout)} para a ${other(st.acc).toUpperCase()}</span>`:''}</div>
+    <div><small>Saiu</small><b class="num c-out">−${brl(t.out)}</b>${t.tout?`<span class="sub2">inclui ${brl(t.tout)} de transferências para a PF</span>`:''}</div>
     <div><small>Investido</small><b class="num c-inv">−${brl(t.inv)}</b></div>
-    <div class="total"><small>Saldo em conta</small><b class="num" style="color:${final<0?'var(--out)':'var(--ink)'}">${brl(final)}</b></div></section>
-    ${missing.length?`<div class="saldo-hint"><span>Informe quanto tem na conta ${missing.map(a=>a.toUpperCase()).join(' e ')} para o saldo ficar igual ao do banco.</span><button class="chip on" id="setSaldo">Informar saldo</button></div>`:''}`;
+    <div class="total"><small>Saldo em conta${st.acc==='all'?' (PJ)':''}</small><b class="num" style="color:${final<0?'var(--out)':'var(--ink)'}">${brl(final)}</b></div></section>
+    ${pfNote}${missing.length?`<div class="saldo-hint"><span>Informe quanto tem na conta ${missing.map(a=>a.toUpperCase()).join(' e ')} para o saldo ficar igual ao do banco.</span><button class="chip on" id="setSaldo">Informar saldo</button></div>`:''}`;
 }
 function renderGeral(){
   const t=totals(st.m);
@@ -851,18 +854,19 @@ function extratoRows(m){
   for(const i of raw){
     let eff, kind;
     if(i.type==='recebimento'){ eff=i.amount; kind='entrada'; }
-    else if(i.type==='transferencia'){ kind='transf'; eff = !single ? 0 : (i.incoming ? i.amount : -i.amount); }
+    else if(i.type==='transferencia'){ kind='transf'; eff = i.incoming ? i.amount : -i.amount; }
     else { eff=-i.amount; kind = i.type==='investimento'?'invest':'saida'; }
     const cc=cardOf(i,i.acc);
     if(cc && kind==='saida'){
       const k=i.acc+'_'+cc.id;
-      if(!cards.has(k)) cards.set(k,{group:true, card:cc, acc:i.acc, day:Math.min(cc.vence,new Date(Math.floor(m/12),m%12+1,0).getDate()), eff:0, kind:'saida', items:[], name:'Fatura '+cc.nome});
-      const g=cards.get(k); g.eff-=i.amount; g.items.push(i);
+      if(!cards.has(k)) cards.set(k,{group:true, info:!single&&i.acc!=='pj', amt:0, card:cc, acc:i.acc, day:Math.min(cc.vence,new Date(Math.floor(m/12),m%12+1,0).getDate()), eff:0, kind:'saida', items:[], name:'Fatura '+cc.nome});
+      const g=cards.get(k); g.eff-=i.amount; g.amt+=i.amount; g.items.push(i);
       continue;
     }
-    rows.push({i, eff, kind, day:dayIn(i.date,m), name:i.name});
+    const info=!single&&i.acc!=='pj';
+    rows.push({i, eff:info?0:eff, info, amt:i.amount, kind, day:dayIn(i.date,m), name:i.name});
   }
-  for(const g of cards.values()){ g.eff=Math.round(g.eff*100)/100; rows.push(g); }
+  for(const g of cards.values()){ g.eff=g.info?0:Math.round(g.eff*100)/100; rows.push(g); }
   const ord={entrada:0,transf:1,saida:2,invest:3};
   rows.sort((a,b)=>a.day-b.day || (ord[a.kind]-ord[b.kind]) || (a.name||'').localeCompare(b.name||''));
   return rows;
@@ -888,8 +892,8 @@ function renderExtrato(){
   const dd=d=>`${String(d).padStart(2,'0')}<small>${ymShort(m)}</small>`;
   const valHTML=r=>{
     const c=r.eff>0?'var(--in)':r.eff<0?(r.kind==='invest'?'var(--inv)':'var(--out)'):'var(--muted)';
-    const v=r.eff===0&&r.kind==='transf'?'⇄ '+brl(r.i.amount):(r.eff>0?'+':'−')+brl(Math.abs(r.eff));
-    const tail = temSaldo ? `<small class="num">saldo ${brl(r.saldo)}</small>` : (r.kind==='saida' ? `<small style="color:${r.paid?'var(--in)':'var(--out)'}">${r.paid?'✓ pago':'a pagar'}</small>` : '');
+    const v=r.info?brl(r.amt):(r.eff>0?'+':'−')+brl(Math.abs(r.eff));
+    const tail = r.info ? `<small>conta PF, ${r.paid?'✓ pago':'a pagar'}</small>` : temSaldo ? `<small class="num">saldo ${brl(r.saldo)}</small>` : (r.kind==='saida' ? `<small style="color:${r.paid?'var(--in)':'var(--out)'}">${r.paid?'✓ pago':'a pagar'}</small>` : '');
     return `<div class="exval"><b class="num" style="color:${c}">${v}</b>${tail}</div>`;
   };
   const subOf=r=>{
@@ -925,7 +929,7 @@ function renderExtrato(){
       <div>Falta pagar<b class="num c-out">${brl(cs.falta)}</b></div>
       <div>Investido<b class="num c-inv">${brl(totOut-cs.total>0?totOut-cs.total:0)}</b></div>
     </div>`}
-    <p class="sub" style="margin-top:10px">Compras no cartão aparecem juntas no dia do vencimento da fatura, como no extrato do banco.${st.acc==='all'?' Na visão Tudo, as transferências entre PF e PJ não mudam o saldo.':''}${!temSaldo?' Contas fixas ficam como pagas quando você marca "Pago" nelas, e as do cartão quando a fatura é marcada como paga.':''}</p>`;
+    <p class="sub" style="margin-top:10px">Compras no cartão aparecem juntas no dia do vencimento da fatura, como no extrato do banco.${st.acc==='all'?' Na visão Tudo, o saldo é o da PJ. As contas da PF aparecem em cinza só para acompanhamento, porque são pagas com as transferências que saíram da PJ.':''}${!temSaldo?' Contas fixas ficam como pagas quando você marca "Pago" nelas, e as do cartão quando a fatura é marcada como paga.':''}</p>`;
   view.querySelectorAll('[data-exf]').forEach(b=>b.onclick=()=>{st.exF=b.dataset.exf;render();});
   const qi=document.getElementById('exQ');
   qi.oninput=()=>{ st.exQ=qi.value; clearTimeout(renderExtrato._t); renderExtrato._t=setTimeout(()=>{ const pos=qi.selectionStart; render(); const n=document.getElementById('exQ'); n.focus(); try{n.setSelectionRange(pos,pos);}catch(e){} },250); };
@@ -1440,7 +1444,7 @@ function openForm(acc,id){
   syncForm(); if(payPre){ frm.pay.value=payPre; syncForm(); } if(id&&frm._meta){frm.meta.value=frm._meta; if(frm._eur>0){frm.isEur.checked=true; frm.eurq.value=String(frm._eur).replace('.',',');} syncForm();} frm._meta=''; frm._eur=0; dlg.showModal(); setTimeout(()=>frm.name.focus(),50);
 }
 frm.addEventListener('input',syncForm);
-frm.addEventListener('change',e=>{ if(e.target.name==='type'){frm.rec.checked=frm.type.value==='fixa'; if(frm.type.value==='transferencia'&&!editing){ frm.acc.value='pj'; if(!frm.cat.value) frm.cat.value='Salário'; }} syncForm(); });
+frm.addEventListener('change',e=>{ if(e.target.name==='type'){frm.rec.checked=frm.type.value==='fixa'; if(frm.type.value==='transferencia'&&!editing){ frm.acc.value='pj'; }} syncForm(); });
 frm.onsubmit=e=>{
   e.preventDefault();
   const valor=parseMoney(frm.valor.value);
